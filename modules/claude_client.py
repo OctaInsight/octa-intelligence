@@ -219,54 +219,76 @@ Return ONLY:
 # ROUND 2a — CONCEPT NOTE EVALUATION
 # ════════════════════════════════════════════════════════════════════════════════
 
-def run_round2a(concept_text: str, call_analysis: dict) -> dict | None:
-    """Evaluate a concept note against Round 1 findings. Returns JSON dict."""
-    system = """You are a senior EU proposal evaluator with expertise in Horizon Europe, 
-Erasmus+ and other EU programmes. You provide honest, constructive assessments of 
-proposal concepts. Output only valid JSON."""
+def run_round2a(concept_text: str, call_analysis: dict) -> tuple:
+    """
+    Evaluate concept note against Round 1 findings.
+    Returns (parsed_dict, raw_text) — raw_text always set, parsed_dict may be None.
+    """
+    system = (
+        "You are an EU proposal evaluator. "
+        "Evaluate the concept note against the call intelligence. "
+        "Return ONLY a JSON object. No markdown. No code fences. "
+        "Start with { and end with }. Nothing else."
+    )
 
-    analysis_summary = json.dumps({
-        k: call_analysis.get(k, [])
-        for k in ["call_objectives","expected_outcomes","expected_impacts",
-                  "master_keywords","strategic_recommendations"]
-    }, indent=2)[:15000]
+    # Compact call summary
+    objectives = [o.get("title","") for o in call_analysis.get("call_objectives",[])[:5]]
+    keywords   = [k.get("keyword","") for k in call_analysis.get("master_keywords",[])
+                  if k.get("importance") in ("critical","high")][:15]
+    recs       = [r.get("recommendation","") for r in
+                  call_analysis.get("strategic_recommendations",[])[:4]]
+    outcomes   = [o.get("outcome","") for o in call_analysis.get("expected_outcomes",[])[:4]]
 
-    prompt = f"""Evaluate this concept note against the call intelligence analysis.
+    prompt = f"""Evaluate this concept note against the call intelligence.
 
-=== CALL INTELLIGENCE SUMMARY ===
-{analysis_summary}
+=== CALL OBJECTIVES ===
+{chr(10).join(f"- {o}" for o in objectives)}
+
+=== EXPECTED OUTCOMES ===
+{chr(10).join(f"- {o}" for o in outcomes)}
+
+=== CRITICAL KEYWORDS (must appear in proposal) ===
+{", ".join(keywords)}
+
+=== STRATEGIC RECOMMENDATIONS ===
+{chr(10).join(f"- {r}" for r in recs)}
+
+=== CONSORTIUM POSITIONING ===
+{call_analysis.get("consortium_positioning","")[:1000]}
 
 === CONCEPT NOTE ===
-{concept_text[:20000]}
+{concept_text[:15000]}
 
-Return ONLY a JSON object:
+Return ONLY this JSON (no markdown, start with {{):
 {{
-  "overall_alignment_score": 0-100,
+  "overall_alignment_score": 65,
   "scores_by_dimension": {{
-    "objectives":  {{"score": 0-100, "comment": "..."}},
-    "impact":      {{"score": 0-100, "comment": "..."}},
-    "innovation":  {{"score": 0-100, "comment": "..."}},
-    "partners":    {{"score": 0-100, "comment": "..."}},
-    "policy":      {{"score": 0-100, "comment": "..."}}
+    "objectives":  {{"score": 70, "comment": "..."}},
+    "impact":      {{"score": 60, "comment": "..."}},
+    "innovation":  {{"score": 75, "comment": "..."}},
+    "partners":    {{"score": 65, "comment": "..."}},
+    "policy":      {{"score": 60, "comment": "..."}}
   }},
   "strengths": [
-    {{"dimension": "...", "description": "...", "evidence": "quote from concept"}}
+    {{"dimension": "innovation", "description": "...", "evidence": "quote from concept"}}
   ],
   "gaps": [
-    {{"dimension": "...", "description": "...", "severity": "high|medium|low", "suggestion": "..."}}
+    {{"dimension": "impact", "description": "...", "severity": "high", "suggestion": "..."}}
   ],
-  "missing_keywords": ["keyword not in concept but critical for call"],
+  "missing_keywords": ["keyword1", "keyword2"],
   "recommendations": [
     {{"priority": 1, "action": "...", "rationale": "..."}}
   ],
-  "readiness_verdict": "strong|promising|needs_work|significant_revision_needed",
-  "overall_comment": "2-3 paragraph honest assessment"
+  "readiness_verdict": "promising",
+  "overall_comment": "2-3 paragraph honest assessment of this concept note."
 }}"""
 
-    response = _call_realtime(system, prompt, max_tokens=4000)
-    if not response:
-        return None
-    return _parse_json_response(response)
+    raw_text = _call_realtime(system, prompt, max_tokens=4000)
+    if not raw_text:
+        return None, None
+    parsed = _parse_json_response(raw_text)
+    return parsed, raw_text
+
 
 
 # ════════════════════════════════════════════════════════════════════════════════
