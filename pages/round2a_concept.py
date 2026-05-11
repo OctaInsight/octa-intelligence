@@ -58,29 +58,73 @@ concept_text = st.text_area(
 if st.button("📝 Evaluate Concept Note", type="primary",
              use_container_width=True, disabled=not concept_text.strip()):
     with st.spinner("Evaluating your concept against the call intelligence…"):
-        result = run_round2a(concept_text, analysis)
+        result, raw_text = run_round2a(concept_text, analysis)
 
-    if result:
-        ok, _ = create_concept_evaluation({
-            "proposal_id":          sel_pid,
-            "call_analysis_id":     analysis["id"],
-            "concept_text":         concept_text,
-            "overall_alignment_score": result.get("overall_alignment_score",0),
-            "scores_by_dimension":  result.get("scores_by_dimension",{}),
-            "gaps":                 result.get("gaps",[]),
-            "strengths":            result.get("strengths",[]),
-            "recommendations":      result.get("recommendations",[]),
-            "raw_response":         str(result)[:5000],
+    if raw_text:
+        ok, eval_id = create_concept_evaluation({
+            "proposal_id":             sel_pid,
+            "call_analysis_id":        analysis["id"],
+            "concept_text":            concept_text,
+            "overall_alignment_score": result.get("overall_alignment_score", 0) if result else 0,
+            "scores_by_dimension":     result.get("scores_by_dimension", {}) if result else {},
+            "gaps":                    result.get("gaps", [])            if result else [],
+            "strengths":               result.get("strengths", [])       if result else [],
+            "recommendations":         result.get("recommendations", []) if result else [],
+            "raw_response":            raw_text[:8000],
         })
-        if ok: st.success("✅ Evaluation complete!"); st.rerun()
+        if ok:
+            if result:
+                st.success("✅ Evaluation complete!")
+            else:
+                st.warning("⚠ Response saved but JSON could not be parsed. "
+                           "Click Re-Parse below to retry.")
+            st.rerun()
     else:
-        st.error("❌ Evaluation failed. Please try again.")
+        st.error("❌ Claude returned no response. Check your API key.")
 
 # ── Results ───────────────────────────────────────────────────────────────────
 if not evaluations:
     st.stop()
 
 ev = evaluations[0]
+
+# Check if structured data exists
+_has_scores = bool(ev.get("scores_by_dimension") or ev.get("gaps") or ev.get("strengths"))
+_raw_ev     = ev.get("raw_response", "")
+
+if not _has_scores and _raw_ev:
+    warn = D["warning"]
+    st.markdown(
+        f"<div style='background:{warn}22;border:1px solid {warn};border-radius:10px;"
+        f"padding:0.9rem 1.2rem;margin-bottom:0.8rem'>"
+        f"<strong style='color:{warn}'>⚠ Structured results could not be parsed.</strong><br>"
+        f"<span style='color:{D["muted"]};font-size:0.84rem'>"
+        f"The raw AI response is shown below. Click Re-Parse to try extracting structured data.</span>"
+        f"</div>", unsafe_allow_html=True)
+
+    if st.button("🔄 Re-Parse", type="primary", key="reparse_2a"):
+        from modules.claude_client import _parse_json_response
+        r2 = _parse_json_response(_raw_ev)
+        if r2:
+            from modules.database import db
+            db().table("concept_evaluations").update({
+                "overall_alignment_score": r2.get("overall_alignment_score", 0),
+                "scores_by_dimension":     r2.get("scores_by_dimension", {}),
+                "gaps":                    r2.get("gaps", []),
+                "strengths":               r2.get("strengths", []),
+                "recommendations":         r2.get("recommendations", []),
+            }).eq("id", ev["id"]).execute()
+            st.success("✅ Re-parsed!"); st.rerun()
+        else:
+            st.error("Still could not parse. See raw response below.")
+
+    with st.expander("📄 Raw AI Response", expanded=True):
+        st.markdown(
+            f"<div style='background:{D["bg2"]};border-radius:8px;padding:1rem;"
+            f"white-space:pre-wrap;font-size:0.83rem;color:{D["text"]}'>"
+            f"{_raw_ev}</div>", unsafe_allow_html=True)
+    st.stop()
+
 section_label("📊 Evaluation Results")
 
 # Score overview
