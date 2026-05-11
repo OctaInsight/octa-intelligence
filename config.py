@@ -204,10 +204,10 @@ CLAUDE_MAX_TOKENS     = 8000
 MAX_TEXT_CHARS        = 500_000   # ~125K tokens — store full text below this
 CHUNK_OVERLAP         = 200       # chars overlap when chunking
 
-# ── Google Drive settings ──────────────────────────────────────────────────────
-DRIVE_ROOT_FOLDER_NAME = "Octa Intelligence"
-DRIVE_POLICY_SUBFOLDER = "Policy Library"
-DRIVE_TIER_FOLDERS     = {
+# ── Supabase Storage settings ─────────────────────────────────────────────────
+STORAGE_BUCKET         = "policy-documents"
+DRIVE_POLICY_SUBFOLDER = "Policy Library"   # kept for folder_path labels
+DRIVE_TIER_FOLDERS     = {                  # kept for storage path structure
     "core":          "Core",
     "programme":     "Programme",
     "call_specific": "Call-Specific",
