@@ -297,87 +297,91 @@ Return ONLY this JSON (no markdown, start with {{):
 
 def run_round2b(structure_template: list, call_analysis: dict,
                 concept_evaluation: dict | None,
-                programme: str, user_custom_titles: dict = None) -> dict | None:
+                programme: str, user_custom_titles: dict = None) -> tuple:
     """
     Generate annotated proposal architecture.
-    structure_template: list of section dicts from PROGRAMMES config
-    user_custom_titles: {section_id: user_title} optional overrides
-    Returns JSON with enriched sections.
+    Returns (parsed_dict, raw_text).
     """
-    system = """You are a master EU proposal writer and strategic consultant. 
-You create detailed, actionable proposal writing guides that help researchers 
-win competitive EU funding. You know exactly what reviewers look for in each 
-section of every EU programme. Output only valid JSON."""
+    system = (
+        "You are an expert EU proposal writer. "
+        "Annotate the given proposal structure with reviewer guidance. "
+        "Return ONLY a JSON object. No markdown. No code fences. "
+        "Start with { and end with }. Nothing else."
+    )
 
-    call_summary = json.dumps({
-        k: call_analysis.get(k, [])
-        for k in ["call_objectives","expected_outcomes","expected_impacts",
-                  "master_keywords","policy_framing","strategic_recommendations",
-                  "hidden_messages","recommended_kpis"]
-    }, indent=2)[:12000]
-
-    gaps_summary = ""
+    # Build compact intelligence summary
+    objectives = [o.get("title","") for o in call_analysis.get("call_objectives",[])[:5]]
+    keywords   = [k.get("keyword","") for k in call_analysis.get("master_keywords",[])
+                  if k.get("importance") in ("critical","high")][:12]
+    policies   = []
+    pf = call_analysis.get("policy_framing", {})
+    if isinstance(pf, dict):
+        policies = [p.get("policy","") for p in pf.get("primary_policies",[])[:4]]
+    recs       = [r.get("recommendation","") for r in
+                  call_analysis.get("strategic_recommendations",[])[:4]]
+    gaps_text  = ""
     if concept_evaluation:
-        gaps_summary = f"""
-=== CONCEPT GAPS TO ADDRESS ===
-{json.dumps(concept_evaluation.get('gaps',[]), indent=2)[:3000]}
-"""
+        gaps = concept_evaluation.get("gaps",[])[:5]
+        gaps_text = "GAPS TO ADDRESS: " + "; ".join(
+            g.get("description","") for g in gaps if g.get("description")
+        )
 
-    custom_titles_note = ""
-    if user_custom_titles:
-        custom_titles_note = f"""
-=== USER'S SECTION TITLES (enhance these, don't replace without good reason) ===
-{json.dumps(user_custom_titles, indent=2)}
-"""
+    # Build section list as simple text
+    section_lines = []
+    for i, sec in enumerate(structure_template):
+        title = user_custom_titles.get(sec.get("id",""), sec.get("title","")) if user_custom_titles else sec.get("title","")
+        prefix = "  " * (sec.get("level",1) - 1)
+        section_lines.append(f"{prefix}{sec.get('id','')}: {title}")
 
-    structure_str = json.dumps(structure_template, indent=2)
+    sections_text = chr(10).join(section_lines)
 
-    prompt = f"""Generate a fully annotated proposal architecture for a {programme} proposal.
+    prompt = f"""Annotate this {programme} proposal structure with writing guidance.
 
 === CALL INTELLIGENCE ===
-{call_summary}
-{gaps_summary}
-{custom_titles_note}
+Objectives: {"; ".join(objectives)}
+Critical keywords: {", ".join(keywords)}
+Key policies: {", ".join(policies)}
+Recommendations: {"; ".join(recs)}
+{gaps_text}
+Hidden messages: {str(call_analysis.get("hidden_messages",""))[:500]}
 
-=== BASE STRUCTURE TO ANNOTATE ===
-{structure_str}
+=== SECTIONS TO ANNOTATE ===
+{sections_text}
 
-For EACH section in the structure, return an enriched version with:
-- ai_title: improved title (aligned with call language and evaluation criteria)
-- title_rationale: why this title works (1 sentence)
-- reviewer_guidance: exactly what a reviewer expects to find here (3-5 specific points)
-- policy_connections: list of policies to reference in this section
-- keywords_to_include: list of 3-8 specific keywords from the call
-- measures_and_evidence: what quantitative evidence, KPIs or baselines to include
-- common_mistakes: what proposers typically get wrong in this section
-- word_count_guidance: recommended length for this section
+For EACH section, provide:
+- ai_title: improved title aligned with call language
+- reviewer_guidance: 3 specific bullet points on what reviewer expects here
+- policy_connections: 1-2 policies to cite in this section
+- keywords_to_include: 3-5 keywords from the call for this section
+- measures_and_evidence: what data/KPIs/evidence to include
+- word_count_guidance: recommended word count range
+- common_mistakes: 1-2 common errors to avoid
 
-Return ONLY a JSON object:
+Return ONLY JSON starting with {{ :
 {{
   "sections": [
     {{
-      "id": "section id from template",
-      "level": 1-3,
-      "original_title": "from template",
-      "ai_title": "enhanced title",
-      "title_rationale": "...",
-      "reviewer_guidance": ["point 1", "point 2", "point 3"],
-      "policy_connections": [{{"policy": "...", "how": "...", "where_in_section": "..."}}],
-      "keywords_to_include": ["kw1", "kw2"],
-      "measures_and_evidence": "specific guidance on numbers, KPIs, baselines",
-      "common_mistakes": ["mistake 1", "mistake 2"],
-      "word_count_guidance": "e.g. 400-600 words",
-      "order": integer
+      "id": "1",
+      "level": 1,
+      "original_title": "Excellence",
+      "ai_title": "Scientific Excellence and Innovation",
+      "reviewer_guidance": ["Point 1 reviewers check", "Point 2", "Point 3"],
+      "policy_connections": ["Green Deal - Chapter 3", "Horizon Europe Work Programme p.45"],
+      "keywords_to_include": ["innovation", "excellence", "impact"],
+      "measures_and_evidence": "Include TRL levels, baseline metrics, innovation gap evidence",
+      "word_count_guidance": "500-700 words",
+      "common_mistakes": ["Too generic objectives", "Missing baseline data"]
     }}
   ],
-  "general_advice": "3-5 paragraphs of strategic advice for writing this proposal",
-  "top_5_priorities": ["The 5 most important things this proposal must achieve"]
+  "general_advice": "Strategic advice for writing this proposal...",
+  "top_5_priorities": ["Priority 1", "Priority 2", "Priority 3", "Priority 4", "Priority 5"]
 }}"""
 
-    response = _call_realtime(system, prompt, max_tokens=8000)
-    if not response:
-        return None
-    return _parse_json_response(response)
+    raw_text = _call_realtime(system, prompt, max_tokens=8000)
+    if not raw_text:
+        return None, None
+    parsed = _parse_json_response(raw_text)
+    return parsed, raw_text
 
 
 # ════════════════════════════════════════════════════════════════════════════════
