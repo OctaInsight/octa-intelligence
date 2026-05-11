@@ -65,10 +65,10 @@ with st.expander("⚙️ Customise Structure (optional)", expanded=not archs):
 
     if template_sections:
         for sec in template_sections:
-            sid   = sec.get("id","")
-            level = sec.get("level",1)
-            default_title = sec.get("title","")
-            indent = "  " * (level - 1)
+            sid          = sec.get("id","")
+            level        = sec.get("level",1)
+            default_title= sec.get("title","")
+            indent       = "  " * (level - 1)
             custom = st.text_input(
                 f"{indent}Section {sid}",
                 value=default_title,
@@ -77,7 +77,84 @@ with st.expander("⚙️ Customise Structure (optional)", expanded=not archs):
             if custom != default_title:
                 user_titles[sid] = custom
     else:
-        st.info("Using custom structure — AI will generate a structure based on the call.")
+        # Custom structure — user defines their own sections
+        acc2 = D["accent"]
+        st.markdown(
+            f"<p style='color:{muted};font-size:0.84rem'>"
+            f"You selected <strong>Custom Structure</strong>. "
+            f"Enter your proposed section titles below — one per line. "
+            f"Use indentation (2 spaces or a dash) to indicate subsections. "
+            f"The AI will annotate each section with reviewer guidance.</p>",
+            unsafe_allow_html=True)
+
+        st.markdown(
+            f"<div style='background:{D["bg2"]};border-left:3px solid {acc2};"
+            f"border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.5rem;"
+            f"font-size:0.8rem;color:{muted}'>"
+            f"Example format:<br>"
+            f"<code style='color:{acc2}'>"
+            f"1. Excellence<br>"
+            f"  1.1 Objectives and Ambition<br>"
+            f"  1.2 Methodology<br>"
+            f"2. Impact<br>"
+            f"  2.1 Expected Outcomes<br>"
+            f"3. Implementation<br>"
+            f"  3.1 Work Plan<br>"
+            f"  3.2 Consortium"
+            f"</code></div>",
+            unsafe_allow_html=True)
+
+        custom_structure_text = st.text_area(
+            "Your Proposed Structure",
+            height=280,
+            key="custom_structure_input",
+            placeholder=(
+                "1. Excellence\n"
+                "  1.1 Objectives and Ambition\n"
+                "  1.2 Methodology\n"
+                "  1.3 Innovation\n"
+                "2. Impact\n"
+                "  2.1 Expected Outcomes\n"
+                "  2.2 Dissemination and Exploitation\n"
+                "3. Implementation\n"
+                "  3.1 Work Plan and Work Packages\n"
+                "  3.2 Management Structure\n"
+                "  3.3 Consortium\n"
+                "  3.4 Resources and Budget"
+            )
+        )
+
+        # Parse user text into template_sections format
+        if custom_structure_text.strip():
+            parsed_sections = []
+            order = 0
+            for line in custom_structure_text.strip().splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                # Determine level by leading spaces or dashes
+                leading = len(line) - len(line.lstrip(" -"))
+                level   = 1 if leading == 0 else (2 if leading <= 3 else 3)
+                # Extract ID and title
+                import re
+                m = re.match(r'^[0-9\.]+[\.\)]\s*', stripped)
+                if m:
+                    sec_id = m.group().strip().rstrip(".")
+                    title  = stripped[m.end():].strip()
+                else:
+                    sec_id = str(len(parsed_sections) + 1)
+                    title  = stripped.lstrip("- ").strip()
+                order += 1
+                parsed_sections.append({
+                    "id":    sec_id,
+                    "level": level,
+                    "title": title,
+                    "order": order,
+                })
+            template_sections = parsed_sections
+            st.success(f"✅ {len(parsed_sections)} sections parsed. Click Generate below.")
+        else:
+            st.info("Enter your structure above, then click Generate Architecture.")
 
 col_api1, col_api2 = st.columns(2)
 with col_api1:
