@@ -297,115 +297,168 @@ Return ONLY this JSON (no markdown, start with {{):
 
 def build_section_intelligence(call_analysis: dict,
                                concept_evaluation: dict | None) -> dict:
-    """
-    Build a compact intelligence dict to pass into each section annotation call.
-    Called once, reused for every section.
-    """
+    """Build compact intelligence dict reused across all section annotation calls."""
     objectives = "; ".join(
-        o.get("title","") for o in call_analysis.get("call_objectives",[])[:6]
+        o.get("title","") for o in call_analysis.get("call_objectives",[])[:5]
     )
     keywords = [
         k.get("keyword","")
         for k in call_analysis.get("master_keywords",[])
         if k.get("importance") in ("critical","high")
     ][:12]
+    pf       = call_analysis.get("policy_framing",{})
+    policies = [p.get("policy","") for p in
+                (pf.get("primary_policies",[]) if isinstance(pf,dict) else [])[:5]]
+    hidden   = str(call_analysis.get("hidden_messages",""))[:300]
 
-    pf = call_analysis.get("policy_framing",{})
-    policies = []
-    if isinstance(pf, dict):
-        policies = [p.get("policy","") for p in pf.get("primary_policies",[])[:5]]
-
-    gaps = []
+    # From concept evaluation
+    concept_text   = ""
+    concept_strengths = []
+    concept_gaps   = []
+    concept_missing_kws = []
     if concept_evaluation:
-        gaps = [g.get("description","") for g in concept_evaluation.get("gaps",[])[:4]
-                if g.get("description")]
-
-    recs = [r.get("recommendation","") for r in
-            call_analysis.get("strategic_recommendations",[])[:3]]
+        concept_text = str(concept_evaluation.get("concept_text",""))[:3000]
+        concept_strengths = [
+            s.get("description","") for s in concept_evaluation.get("strengths",[])[:4]
+        ]
+        concept_gaps = [
+            {"dim": g.get("dimension",""), "desc": g.get("description",""),
+             "sug": g.get("suggestion","")}
+            for g in concept_evaluation.get("gaps",[])[:5]
+        ]
+        concept_missing_kws = concept_evaluation.get("missing_keywords",[])[:8]
 
     return {
-        "objectives": objectives,
-        "keywords":   keywords,
-        "policies":   policies,
-        "gaps":       "; ".join(gaps),
-        "recommendations": "; ".join(recs),
-        "hidden":     str(call_analysis.get("hidden_messages",""))[:400],
+        "objectives":          objectives,
+        "keywords":            keywords,
+        "policies":            policies,
+        "hidden":              hidden,
+        "concept_text":        concept_text,
+        "concept_strengths":   concept_strengths,
+        "concept_gaps":        concept_gaps,
+        "missing_keywords":    concept_missing_kws,
     }
 
 
-def annotate_one_section(sec: dict, intel: dict, programme: str) -> dict:
+def annotate_section_batch(sections_batch: list, intel: dict,
+                            programme: str) -> list:
     """
-    Annotate a SINGLE section with tailored reviewer guidance.
-    Returns annotated dict. Never raises — falls back to minimal if parse fails.
+    Annotate 3-5 sections in one API call.
+    Returns list of annotated dicts. Falls back to minimal if parse fails.
     """
     system = (
-        "You are a senior EU proposal writing expert. "
-        "Return ONLY a JSON object starting with { and ending with }. "
-        "No markdown. No code fences. No text before or after the JSON."
+        "You are a senior EU proposal strategist. "
+        "Return ONLY a JSON array starting with [ and ending with ]. "
+        "No markdown. No text before [ or after ]."
     )
 
-    sid   = sec.get("id","")
-    title = sec.get("title","")
-    level = sec.get("level",1)
-    kws   = ", ".join(intel.get("keywords",[])[:8])
-    pols  = "; ".join(intel.get("policies",[])[:4])
-    obj   = intel.get("objectives","")[:300]
-    gaps  = intel.get("gaps","")[:200]
-    recs  = intel.get("recommendations","")[:200]
+    n    = len(sections_batch)
+    kws  = ", ".join(intel.get("keywords",[])[:10])
+    pols = "; ".join(intel.get("policies",[])[:4])
+    obj  = intel.get("objectives","")[:250]
+    hid  = intel.get("hidden","")[:200]
 
-    prompt = f"""Write detailed reviewer guidance for this section of a {programme} proposal.
+    # Concept note summary
+    concept_summary = ""
+    if intel.get("concept_text"):
+        concept_summary  = "CONCEPT NOTE (what the team plans to write):\n"
+        concept_summary += intel["concept_text"][:1500] + "\n"
+        if intel.get("concept_strengths"):
+            concept_summary += "Strengths in concept: " + "; ".join(intel["concept_strengths"][:3]) + "\n"
+        if intel.get("concept_gaps"):
+            gaps_str = "; ".join(g["desc"] for g in intel["concept_gaps"][:3] if g.get("desc"))
+            concept_summary += f"Gaps to address: {gaps_str}\n"
+        if intel.get("missing_keywords"):
+            concept_summary += "Missing keywords: " + ", ".join(intel["missing_keywords"][:6])
 
-SECTION: [{sid}] {title} (heading level {level})
+    # Section list
+    sec_list = "\n".join(
+        f"{i+1}. [{s.get('id','')}] {s.get('title','')} (level {s.get('level',1)})"
+        for i, s in enumerate(sections_batch)
+    )
 
-CALL INTELLIGENCE:
+    prompt = f"""Annotate these {n} sections of a {programme} proposal.
+
+CALL CONTEXT:
 - Objectives: {obj}
 - Critical keywords: {kws}
-- Key policies to cite: {pols}
-- Gaps identified in concept: {gaps}
-- Strategic recommendations: {recs}
+- Key policies: {pols}
+- Hidden expectations: {hid}
 
-Return ONLY this JSON object:
-{{
-  "id": "{sid}",
-  "level": {level},
-  "original_title": "{title}",
-  "ai_title": "improved version of the section title, aligned with call language",
-  "reviewer_guidance": [
-    "Specific thing 1 that reviewers check in this exact section",
-    "Specific thing 2",
-    "Specific thing 3"
-  ],
-  "policy_connections": [
-    "Policy name - exactly how to reference it in this section"
-  ],
-  "keywords_to_include": ["keyword1", "keyword2", "keyword3", "keyword4"],
-  "measures_and_evidence": "Specific KPIs, baselines or data the reviewer expects here",
-  "word_count_guidance": "recommended word count, e.g. 400-600 words",
-  "common_mistakes": ["Common mistake proposers make in this section"]
-}}"""
+{concept_summary}
 
-    raw    = _call_realtime(system, prompt, max_tokens=1000)
+SECTIONS TO ANNOTATE:
+{sec_list}
+
+For EACH section write guidance that:
+1. Tells the writer exactly what to include FROM THEIR CONCEPT NOTE
+2. Identifies what the REVIEWER will specifically check here
+3. Lists keywords and policies to mention IN THIS SECTION
+4. Flags any GAPS from the concept that must be addressed here
+
+Keep guidance concise and specific — 2-3 focused sentences per field, not generic text.
+
+Return a JSON ARRAY with exactly {n} objects:
+[
+  {{
+    "id": "exact id",
+    "level": 1,
+    "original_title": "exact title",
+    "ai_title": "improved title aligned with call language",
+    "guidance_paragraph": "2-3 sentences telling the writer SPECIFICALLY what to write in this section based on their concept note and call requirements. Reference their actual content.",
+    "reviewer_guidance": ["Specific thing reviewer checks in THIS section - not generic", "Point 2", "Point 3"],
+    "policy_connections": ["Specific policy - how to cite it here"],
+    "keywords_to_include": ["kw1", "kw2", "kw3"],
+    "gaps_to_address": "Specific gap from concept note that must be fixed in this section",
+    "word_count_guidance": "400-600 words"
+  }}
+]"""
+
+    raw    = _call_realtime(system, prompt, max_tokens=4000)
     parsed = _parse_json_response(raw) if raw else None
 
-    if isinstance(parsed, dict) and parsed.get("reviewer_guidance"):
-        parsed["_parse_failed"] = False
-        parsed["order"] = sec.get("order", 0)
+    # Validate result
+    if isinstance(parsed, list) and len(parsed) >= len(sections_batch) - 1:
+        for p in parsed:
+            if isinstance(p, dict): p["_parse_failed"] = False
+        # Pad if short
+        while len(parsed) < len(sections_batch):
+            sec = sections_batch[len(parsed)]
+            parsed.append(_minimal_section(sec, intel))
         return parsed
 
-    # Minimal fallback — still better than nothing
+    if isinstance(parsed, dict) and parsed.get("sections"):
+        return parsed["sections"]
+
+    # Batch failed — return minimal for all
+    return [_minimal_section(s, intel) for s in sections_batch]
+
+
+def _minimal_section(sec: dict, intel: dict) -> dict:
+    """Minimal but non-generic fallback using actual intel data."""
+    title = sec.get("title","")
     return {
-        "id": sid, "level": level, "order": sec.get("order",0),
-        "original_title": title, "ai_title": title,
+        "id":            sec.get("id",""),
+        "level":         sec.get("level",1),
+        "order":         sec.get("order",0),
+        "original_title":title,
+        "ai_title":      title,
+        "guidance_paragraph": (
+            f"In this section ({title}), present your approach clearly linking to "
+            f"the call objectives: {intel.get('objectives','')[:150]}. "
+            f"Ensure the following keywords appear: {', '.join(intel.get('keywords',[])[:4])}."
+        ),
         "reviewer_guidance": [
-            f"Address the call objectives related to {title}",
-            "Demonstrate clear innovation and scientific rigour",
-            "Show alignment with EU policy priorities"
+            f"Check alignment with call objective: {intel.get('objectives','')[:80]}",
+            "Verify clear methodology and innovation claim",
+            f"Look for policy references: {', '.join(intel.get('policies',[])[:2])}",
         ],
         "policy_connections": intel.get("policies",[])[:2],
-        "keywords_to_include": intel.get("keywords",[])[:4],
-        "measures_and_evidence": "Include relevant KPIs, baselines and impact evidence",
+        "keywords_to_include": intel.get("keywords",[])[:5],
+        "gaps_to_address": "; ".join(
+            g["desc"] for g in intel.get("concept_gaps",[])[:2] if g.get("desc")
+        ) or "Address all call requirements explicitly.",
         "word_count_guidance": "400-600 words",
-        "common_mistakes": ["Being too generic", "Missing call-specific terminology"],
         "_parse_failed": True,
     }
 
@@ -418,17 +471,21 @@ def generate_overall_advice(intel: dict, programme: str,
         "Return ONLY a JSON object starting with {. No markdown."
     )
     titles_str = "; ".join(section_titles[:8])
-    prompt = f"""Give strategic advice for writing a {programme} proposal.
+    concept_note = intel.get("concept_text","")[:800]
+    gaps_str     = "; ".join(g["desc"] for g in intel.get("concept_gaps",[])[:3] if g.get("desc"))
+
+    prompt = f"""Strategic advice for writing a {programme} proposal.
 
 Sections: {titles_str}
-Objectives: {intel.get("objectives","")[:250]}
-Key recommendations: {intel.get("recommendations","")[:250]}
+Objectives: {intel.get("objectives","")[:200]}
+Concept note summary: {concept_note}
+Key gaps to address: {gaps_str}
 
 Return ONLY:
 {{
-  "general_advice": "3-4 sentences of overall strategic writing advice",
+  "general_advice": "3-4 sentences of strategic writing advice specific to this concept and call",
   "top_5_priorities": [
-    "Most important priority 1",
+    "Most critical priority based on call + concept analysis",
     "Priority 2",
     "Priority 3",
     "Priority 4",
@@ -438,9 +495,7 @@ Return ONLY:
 
     raw    = _call_realtime(system, prompt, max_tokens=600)
     parsed = _parse_json_response(raw) if raw else None
-    if isinstance(parsed, dict):
-        return parsed
-    return {"general_advice": "", "top_5_priorities": []}
+    return parsed if isinstance(parsed, dict) else {"general_advice":"","top_5_priorities":[]}
 
 
 
