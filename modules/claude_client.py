@@ -33,24 +33,52 @@ def _call_realtime(system: str, user: str,
 
 
 def _parse_json_response(text: str) -> dict | list | None:
-    """Extract JSON from Claude's response, handling markdown code fences."""
+    """
+    Robustly extract JSON from Claude response.
+    Handles: plain JSON, ```json blocks, JSON with surrounding text.
+    """
+    import re
     if not text:
         return None
     clean = text.strip()
-    if clean.startswith("```"):
-        lines = clean.split("\n")
-        clean = "\n".join(lines[1:-1]) if len(lines) > 2 else clean
+
+    # Remove markdown code fences (```json ... ``` or ``` ... ```)
+    fence = re.sub(r'^```(?:json)?\s*', '', clean, flags=re.MULTILINE)
+    fence = re.sub(r'```\s*$', '', fence, flags=re.MULTILINE).strip()
+
+    # Try direct parse first
+    try:
+        return json.loads(fence)
+    except Exception:
+        pass
+
+    # Try original text
     try:
         return json.loads(clean)
     except Exception:
-        # Try to find JSON block
-        import re
-        match = re.search(r'\{.*\}|\[.*\]', clean, re.DOTALL)
-        if match:
+        pass
+
+    # Find the largest JSON object or array in the text
+    for pattern in [r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # nested objects
+                    r'\{.*?\}',                               # simple objects
+                    r'\[.*?\]']:                              # arrays
+        matches = re.findall(pattern, fence, re.DOTALL)
+        # Try from largest to smallest
+        for m in sorted(matches, key=len, reverse=True):
             try:
-                return json.loads(match.group())
+                return json.loads(m)
             except Exception:
-                pass
+                continue
+
+    # Last resort: find first { and last } and try that
+    start = fence.find('{')
+    end   = fence.rfind('}')
+    if start != -1 and end > start:
+        try:
+            return json.loads(fence[start:end+1])
+        except Exception:
+            pass
+
     return None
 
 
@@ -58,10 +86,9 @@ def _parse_json_response(text: str) -> dict | list | None:
 # ROUND 1 — CALL INTELLIGENCE ANALYSIS
 # ════════════════════════════════════════════════════════════════════════════════
 
-ROUND1_SYSTEM = """You are a senior EU research funding strategist with 20 years of experience 
-winning competitive grants. You analyse funding calls and produce strategic intelligence reports 
-that help consortia craft winning proposals. You are precise, insightful and always ground your 
-analysis in the actual document text. You output only valid JSON — no preamble, no explanation."""
+ROUND1_SYSTEM = """You are a senior EU research funding strategist with 20 years of experience winning competitive grants. You analyse funding calls and produce strategic intelligence reports that help consortia craft winning proposals.
+
+CRITICAL INSTRUCTION: Your entire response must be a single valid JSON object. Do NOT include any text before or after the JSON. Do NOT use markdown code blocks. Do NOT include ```json or ```. Start your response with { and end with }. Nothing else."""
 
 def build_round1_prompt(call_text: str, policy_texts: dict,
                          guide_text: str, briefing: dict) -> str:
@@ -97,7 +124,10 @@ Produce a comprehensive strategic intelligence report as a JSON object.
 {guide_section}
 {briefing_section}
 
-Return ONLY a JSON object with exactly these keys:
+Your response must be ONLY a JSON object — no markdown, no explanation, no code fences.
+Start directly with {{ and end with }}. 
+
+Return a JSON object with exactly these keys:
 
 {{
   "call_objectives": [
