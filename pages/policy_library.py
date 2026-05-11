@@ -90,51 +90,76 @@ with st.expander("Upload New Policy Document", expanded=not all_docs):
         if not doc_title.strip():
             st.error("❌ Document title required."); st.stop()
 
-        with st.spinner("Processing document…"):
-            # Extract text
-            text = ""; page_count = 0; file_bytes = None; file_name = ""
-            mime_type = "application/pdf"
+        progress = st.container()
 
-            if source_type == "PDF upload" and uploaded:
-                file_bytes = uploaded.read()
-                file_name  = uploaded.name
-                mime_type  = "application/pdf"
-                text, page_count = extract_from_pdf(file_bytes)
-            elif source_type == "Word upload" and uploaded:
-                file_bytes = uploaded.read()
-                file_name  = uploaded.name
-                mime_type  = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                text, page_count = extract_from_docx(file_bytes)
-            elif source_type == "URL" and url_input.strip():
-                text, page_count = extract_from_url(url_input.strip())
-            else:
-                st.error("❌ Please provide a file or URL."); st.stop()
+        # Step 1: Extract text
+        with progress:
+            st.info("📄 Step 1/4 — Extracting text from document…")
+        text = ""; page_count = 0; file_bytes = None; file_name = ""
+        mime_type = "application/pdf"
 
-            if not text or text.startswith("["):
-                st.error(f"❌ Text extraction failed: {text}"); st.stop()
+        if source_type == "PDF upload" and uploaded:
+            file_bytes = uploaded.read()
+            file_name  = uploaded.name
+            mime_type  = "application/pdf"
+            text, page_count = extract_from_pdf(file_bytes)
+        elif source_type == "Word upload" and uploaded:
+            file_bytes = uploaded.read()
+            file_name  = uploaded.name
+            mime_type  = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            text, page_count = extract_from_docx(file_bytes)
+        elif source_type == "URL" and url_input.strip():
+            text, page_count = extract_from_url(url_input.strip())
+        else:
+            st.error("❌ Please provide a file or URL."); st.stop()
 
-            stored_text, truncated = prepare_text_for_storage(text)
+        if not text or text.startswith("["):
+            st.error(f"❌ Text extraction failed: {text}"); st.stop()
 
-            # AI summary
-            summary_data = {}
-            if use_ai_summary and text:
-                st.info("Generating AI summary…")
-                summary_data = generate_document_summary(text[:60000], doc_title) or {}
-                if summary_data.get("category_suggestion"):
-                    # Override category with AI suggestion if blank
-                    if not category or category == "Other":
-                        category = summary_data["category_suggestion"]
+        with progress:
+            st.success(f"✅ Text extracted — {count_words(text):,} words, ~{page_count} pages")
 
-            # Upload to Google Drive
-            drive_info = {}
-            if file_bytes and file_name:
+        stored_text, truncated = prepare_text_for_storage(text)
+
+        # Step 2: AI summary
+        summary_data = {}
+        if use_ai_summary and text:
+            with progress:
+                st.info("🤖 Step 2/4 — Generating AI summary and keywords…")
+            summary_data = generate_document_summary(text[:60000], doc_title) or {}
+            if summary_data.get("category_suggestion"):
+                if not category or category == "Other":
+                    category = summary_data["category_suggestion"]
+            with progress:
+                st.success(f"✅ AI summary ready — {len(summary_data.get('keywords',[]))} keywords extracted")
+        else:
+            with progress:
+                st.info("⏭ Step 2/4 — Skipping AI summary")
+
+        # Step 3: Upload to Google Drive
+        drive_info = {}
+        if file_bytes and file_name:
+            with progress:
+                st.info(f"☁ Step 3/4 — Uploading '{file_name}' to Google Drive…")
                 st.info("Uploading to Google Drive…")
                 drive_info = upload_policy_document(
                     file_bytes, file_name, mime_type, tier_key, category
                 ) or {}
 
-            # Save to Supabase
-            ok, doc_id = create_policy_document({
+            if drive_info:
+                with progress:
+                    st.success(f"✅ Uploaded to Drive: {drive_info.get('folder_path','')}")
+            else:
+                with progress:
+                    st.warning("⚠ Drive upload failed — document will be saved to Supabase only")
+        else:
+            with progress:
+                st.info("⏭ Step 3/4 — No file to upload to Drive (URL source)")
+
+        # Step 4: Save to Supabase
+        with progress:
+            st.info("💾 Step 4/4 — Saving to library database…")
+        ok, doc_id = create_policy_document({
                 "title":             doc_title.strip(),
                 "tier":              tier_key,
                 "category":          category,
@@ -155,11 +180,7 @@ with st.expander("Upload New Policy Document", expanded=not all_docs):
                 "uploaded_by":       user_id,
             })
 
-            if ok:
-                st.success(f"✅ '{doc_title}' added to the library!")
-                st.rerun()
-            else:
-                st.error(f"❌ Failed to save: {doc_id}")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # KNOWLEDGE TREE VIEW
