@@ -312,3 +312,150 @@ def export_architecture_docx(architecture: dict, analysis: dict,
     buf = io.BytesIO()
     doc.save(buf); buf.seek(0)
     return buf.read()
+
+
+def export_round2a_docx(evaluation: dict, proposal_id: str, acronym: str) -> bytes:
+    """Export Round 2a Concept Note Evaluation as a Word document."""
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    GREEN  = RGBColor(0x00, 0x66, 0x33)
+    RED    = RGBColor(0xC0, 0x00, 0x00)
+    AMBER  = RGBColor(0xCC, 0x66, 0x00)
+    NAVY   = RGBColor(0x1B, 0x2A, 0x4A)
+    TEAL   = RGBColor(0x00, 0x7B, 0x8A)
+    GREY   = RGBColor(0x55, 0x66, 0x77)
+
+    doc = _setup_doc()
+
+    # Title
+    t = doc.add_paragraph()
+    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = t.add_run("Concept Note Evaluation Report")
+    run.bold = True; run.font.size = Pt(18); run.font.color.rgb = NAVY
+
+    doc.add_paragraph()
+    t2 = doc.add_paragraph()
+    t2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    t2.add_run(f"Proposal: {acronym} ({proposal_id})").font.color.rgb = GREY
+
+    t3 = doc.add_paragraph()
+    t3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    t3.add_run(f"Generated: {date.today().isoformat()}").font.color.rgb = GREY
+    doc.add_page_break()
+
+    # Overall score
+    overall = float(evaluation.get("overall_alignment_score", 0) or 0)
+    verdict = evaluation.get("readiness_verdict", "")
+
+    _heading(doc, "Overall Alignment Score")
+    score_para = doc.add_paragraph()
+    run_score  = score_para.add_run(f"{overall:.0f} / 100")
+    run_score.bold = True; run_score.font.size = Pt(28)
+    run_score.font.color.rgb = (GREEN if overall >= 75 else
+                                (AMBER if overall >= 50 else RED))
+    if verdict:
+        vp = doc.add_paragraph()
+        vp.add_run(f"Verdict: {verdict.replace('_', ' ').title()}").bold = True
+
+    if evaluation.get("overall_comment"):
+        doc.add_paragraph()
+        doc.add_paragraph(evaluation["overall_comment"])
+
+    doc.add_page_break()
+
+    # Scores by dimension
+    dims = evaluation.get("scores_by_dimension", {})
+    if dims:
+        _heading(doc, "Scores by Dimension")
+        from docx.oxml.ns import qn
+        from docx.oxml    import OxmlElement
+
+        def _set_bg(cell, hex_color):
+            tc   = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            shd  = OxmlElement("w:shd")
+            shd.set(qn("w:fill"), hex_color)
+            shd.set(qn("w:val"),  "clear")
+            tcPr.append(shd)
+
+        table = doc.add_table(rows=1, cols=3)
+        table.style = "Table Grid"
+        for i, h in enumerate(["Dimension", "Score", "Comment"]):
+            cell = table.rows[0].cells[i]
+            cell.text = h
+            cell.paragraphs[0].runs[0].bold = True
+            cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            _set_bg(cell, "1B2A4A")
+
+        for dim, data in dims.items():
+            score   = data.get("score", 0) if isinstance(data, dict) else int(data)
+            comment = data.get("comment","") if isinstance(data, dict) else ""
+            row     = table.add_row().cells
+            row[0].text = dim.replace("_"," ").title()
+            row[1].text = f"{score}/100"
+            row[1].paragraphs[0].runs[0].bold = True
+            row[1].paragraphs[0].runs[0].font.color.rgb = (
+                GREEN if score >= 75 else (AMBER if score >= 50 else RED)
+            )
+            row[2].text = comment
+
+    doc.add_paragraph()
+
+    # Strengths
+    strengths = evaluation.get("strengths", [])
+    if strengths:
+        _heading(doc, "✅ Strengths")
+        for s in strengths:
+            p   = doc.add_paragraph()
+            dim = s.get("dimension","").replace("_"," ").title()
+            run = p.add_run(f"[{dim}] ")
+            run.bold = True; run.font.color.rgb = GREEN
+            p.add_run(s.get("description",""))
+            if s.get("evidence"):
+                ep = doc.add_paragraph()
+                ep.add_run(f"Evidence: {s['evidence']}").font.color.rgb = GREY
+                ep.runs[0].italic = True
+        doc.add_paragraph()
+
+    # Gaps
+    gaps = evaluation.get("gaps", [])
+    if gaps:
+        _heading(doc, "❌ Gaps to Address")
+        SEV_COLORS = {"high": RED, "medium": AMBER, "low": GREY}
+        for g in gaps:
+            sev = g.get("severity","medium")
+            p   = doc.add_paragraph()
+            run = p.add_run(f"[{sev.title()}] {g.get('dimension','').replace('_',' ').title()}: ")
+            run.bold = True; run.font.color.rgb = SEV_COLORS.get(sev, GREY)
+            p.add_run(g.get("description",""))
+            if g.get("suggestion"):
+                sp = doc.add_paragraph()
+                sp.add_run(f"💡 Suggestion: {g['suggestion']}").font.color.rgb = TEAL
+        doc.add_paragraph()
+
+    # Missing keywords
+    kws = evaluation.get("missing_keywords", [])
+    if kws:
+        _heading(doc, "🔑 Missing Keywords")
+        p = doc.add_paragraph()
+        run = p.add_run("These critical keywords from the call are absent in your concept: ")
+        run.font.color.rgb = GREY
+        doc.add_paragraph(" · ".join(kws))
+        doc.add_paragraph()
+
+    # Recommendations
+    recs = evaluation.get("recommendations", [])
+    if recs:
+        _heading(doc, "💡 Recommendations")
+        for r in sorted(recs, key=lambda x: x.get("priority", 99)):
+            _heading(doc, f"Priority {r.get('priority','')}: {r.get('action','')}", level=2)
+            if r.get("rationale"):
+                doc.add_paragraph(r["rationale"])
+        doc.add_paragraph()
+
+    doc.add_paragraph(f"\n\nGenerated by Octa Intelligence · {date.today().isoformat()}")
+
+    buf = io.BytesIO()
+    doc.save(buf); buf.seek(0)
+    return buf.read()
