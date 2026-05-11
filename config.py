@@ -196,8 +196,8 @@ POLICY_TIERS = {
 }
 
 # ── Claude model settings ──────────────────────────────────────────────────────
-CLAUDE_MODEL_REALTIME = "claude-sonnet-4-20250514"
-CLAUDE_MODEL_BATCH    = "claude-sonnet-4-20250514"
+CLAUDE_MODEL_REALTIME = "claude-sonnet-4-6"
+CLAUDE_MODEL_BATCH    = "claude-sonnet-4-6"
 CLAUDE_MAX_TOKENS     = 8000
 
 # Text extraction limits
