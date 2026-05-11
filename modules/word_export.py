@@ -236,15 +236,11 @@ def export_architecture_docx(architecture: dict, analysis: dict,
     _heading(doc, "PROPOSAL STRUCTURE")
 
     def _safe_list(val):
-        """Return val as a list of strings, whatever format it comes in."""
-        if not val:
-            return []
-        if isinstance(val, list):
-            return [str(v) for v in val]
+        if not val: return []
+        if isinstance(val, list): return [str(v) for v in val]
         return [str(val)]
 
     def _safe_pol(pol):
-        """Return policy connection as a string."""
         if isinstance(pol, dict):
             text = pol.get("policy","") or pol.get("name","") or str(pol)
             how  = pol.get("how","") or pol.get("connection","")
@@ -258,6 +254,7 @@ def export_architecture_docx(architecture: dict, analysis: dict,
             title = str(sec.get("ai_title","") or sec.get("original_title","") or sec.get("title","Untitled"))
             _heading(doc, title, level=level)
 
+            # Enhanced title note
             if sec.get("title_rationale"):
                 p = doc.add_paragraph()
                 run = p.add_run(f"[{sec['title_rationale']}]")
@@ -265,6 +262,25 @@ def export_architecture_docx(architecture: dict, analysis: dict,
                 run.font.color.rgb = RGBColor(0x88,0x99,0xB0)
                 run.font.size = Pt(9)
 
+            # ── 1. WHAT TO WRITE HERE (guidance paragraph) ──────────────────
+            gp = str(sec.get("guidance_paragraph","")).strip()
+            if gp:
+                p   = doc.add_paragraph()
+                run = p.add_run("WHAT TO WRITE HERE:")
+                run.bold = True; run.font.color.rgb = RGBColor(0x00,0x66,0xAA)
+                p2  = doc.add_paragraph(gp)
+                p2.runs[0].font.color.rgb = RGBColor(0x00,0x44,0x88) if p2.runs else None
+
+            # ── 2. GAP TO ADDRESS (red — from concept evaluation) ───────────
+            gap = str(sec.get("gaps_to_address","")).strip()
+            if gap:
+                p   = doc.add_paragraph()
+                run = p.add_run("GAP TO ADDRESS:")
+                run.bold = True; run.font.color.rgb = RED
+                gr  = p.add_run(f"  {gap}")
+                gr.font.color.rgb = RED
+
+            # ── 3. REVIEWER EXPECTS (red bullets) ───────────────────────────
             rg = _safe_list(sec.get("reviewer_guidance"))
             if rg:
                 p   = doc.add_paragraph()
@@ -274,6 +290,7 @@ def export_architecture_docx(architecture: dict, analysis: dict,
                     bp = doc.add_paragraph(f"  * {point}", style="List Bullet")
                     for r in bp.runs: r.font.color.rgb = RED
 
+            # ── 4. POLICY CONNECTIONS (blue) ─────────────────────────────────
             pc = sec.get("policy_connections")
             if pc:
                 p   = doc.add_paragraph()
@@ -284,6 +301,7 @@ def export_architecture_docx(architecture: dict, analysis: dict,
                     bp = doc.add_paragraph(f"  * {_safe_pol(pol)}", style="List Bullet")
                     for r in bp.runs: r.font.color.rgb = BLUE
 
+            # ── 5. KEYWORDS (green) ───────────────────────────────────────────
             kws = _safe_list(sec.get("keywords_to_include"))
             if kws:
                 p   = doc.add_paragraph()
@@ -292,6 +310,7 @@ def export_architecture_docx(architecture: dict, analysis: dict,
                 kw  = p.add_run(" / ".join(kws))
                 kw.font.color.rgb = GREEN
 
+            # ── 6. EVIDENCE NEEDED (amber) ────────────────────────────────────
             ev = sec.get("measures_and_evidence","")
             if ev:
                 p   = doc.add_paragraph()
@@ -300,10 +319,11 @@ def export_architecture_docx(architecture: dict, analysis: dict,
                 er  = p.add_run(str(ev))
                 er.font.color.rgb = AMBER
 
+            # ── 7. Word count + mistakes ──────────────────────────────────────
             wc = sec.get("word_count_guidance","")
             if wc:
                 p   = doc.add_paragraph()
-                run = p.add_run(f"Length: {wc}")
+                run = p.add_run(f"Recommended length: {wc}")
                 run.font.color.rgb = RGBColor(0x88,0x99,0xB0)
                 run.font.size = Pt(9)
 
