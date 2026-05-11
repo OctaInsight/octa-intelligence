@@ -342,8 +342,10 @@ with tab3:
             height=80,
             placeholder="Anything else the AI should know when positioning this proposal…")
 
-        if st.form_submit_button("💾 Save Consortium Briefing", type="primary",
-                                  use_container_width=True):
+        save_btn = st.form_submit_button("💾 Save Consortium Briefing", type="primary",
+                                     use_container_width=True)
+
+    if save_btn:
             ok, _ = save_consortium_briefing({
                 "proposal_id":         sel_pid,
                 "consortium_strategy": strategy,
@@ -359,7 +361,14 @@ with tab3:
             })
             if ok:
                 st.success("✅ Consortium briefing saved!")
-                if st.button("→ Proceed to Round 1 Analysis"):
-                    st.switch_page("pages/round1_analysis.py")
+                st.session_state["briefing_saved"] = True
+                st.rerun()
             else:
                 st.error("Save failed.")
+
+    # Proceed button outside the form
+    if st.session_state.get("briefing_saved"):
+        if st.button("→ Proceed to Round 1 Analysis", type="primary",
+                     use_container_width=True, key="proceed_r1"):
+            st.session_state["briefing_saved"] = False
+            st.switch_page("pages/round1_analysis.py")
