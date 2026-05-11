@@ -125,41 +125,59 @@ if st.button("🔍 Run Round 1 Analysis", type="primary", use_container_width=Tr
         if not ok:
             st.error("Failed to create analysis record."); st.stop()
 
-        # Run the analysis
-        result = run_round1_realtime(
+        from datetime import datetime, timezone
+        from modules.claude_client import (_call_realtime, build_round1_prompt,
+                                           _parse_json_response, ROUND1_SYSTEM)
+
+        # Get raw response first, then parse
+        prompt   = build_round1_prompt(
             call_text    = setup.get("call_text",""),
             policy_texts = policy_texts,
             guide_text   = setup.get("guide_text","") if has_guide else "",
             briefing     = briefing_dict,
         )
+        raw_text = _call_realtime(ROUND1_SYSTEM, prompt, max_tokens=8000)
 
-        if result:
-            from datetime import datetime, timezone
-            update_call_analysis(analysis_id, {
-                "status":                   "complete",
-                "call_objectives":          result.get("call_objectives",[]),
-                "expected_outcomes":        result.get("expected_outcomes",[]),
-                "expected_impacts":         result.get("expected_impacts",[]),
-                "expected_outputs":         result.get("expected_outputs",[]),
-                "recommended_kpis":         result.get("recommended_kpis",[]),
-                "policy_framing":           result.get("policy_framing",{}),
-                "master_keywords":          result.get("master_keywords",[]),
-                "synergy_initiatives":      result.get("synergy_initiatives",[]),
-                "hidden_messages":          result.get("hidden_messages",""),
-                "expected_partner_profiles":result.get("expected_partner_profiles",[]),
-                "consortium_positioning":   result.get("consortium_positioning",""),
-                "strategic_recommendations":result.get("strategic_recommendations",[]),
-                "raw_response":             str(result)[:10000],
-                "completed_at":             datetime.now(timezone.utc).isoformat(),
-            })
-            increment_doc_usage(doc_ids)
-            st.success("✅ Analysis complete!"); st.rerun()
+        # Always save raw response
+        update_call_analysis(analysis_id, {"raw_response": (raw_text or "")[:15000]})
+
+        if raw_text:
+            result = _parse_json_response(raw_text)
+            if result:
+                update_call_analysis(analysis_id, {
+                    "status":                   "complete",
+                    "call_objectives":          result.get("call_objectives",[]),
+                    "expected_outcomes":        result.get("expected_outcomes",[]),
+                    "expected_impacts":         result.get("expected_impacts",[]),
+                    "expected_outputs":         result.get("expected_outputs",[]),
+                    "recommended_kpis":         result.get("recommended_kpis",[]),
+                    "policy_framing":           result.get("policy_framing",{}),
+                    "master_keywords":          result.get("master_keywords",[]),
+                    "synergy_initiatives":      result.get("synergy_initiatives",[]),
+                    "hidden_messages":          result.get("hidden_messages",""),
+                    "expected_partner_profiles":result.get("expected_partner_profiles",[]),
+                    "consortium_positioning":   result.get("consortium_positioning",""),
+                    "strategic_recommendations":result.get("strategic_recommendations",[]),
+                    "completed_at":             datetime.now(timezone.utc).isoformat(),
+                })
+                increment_doc_usage(doc_ids)
+                st.success("✅ Analysis complete!"); st.rerun()
+            else:
+                # JSON parse failed — save as partial with raw text readable
+                update_call_analysis(analysis_id, {
+                    "status": "complete",
+                    "hidden_messages": raw_text,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                st.warning("⚠ Analysis saved but could not parse structured JSON. "
+                           "Raw response saved — check the Hidden Messages tab.")
+                st.rerun()
         else:
             update_call_analysis(analysis_id, {
                 "status": "failed",
-                "error_message": "Claude returned no result"
+                "error_message": "Claude returned empty response"
             })
-            st.error("❌ Analysis failed. Please try again.")
+            st.error("❌ Claude returned no response. Check your API key in secrets.")
 
 # ── Display results ───────────────────────────────────────────────────────────
 if not analyses:
