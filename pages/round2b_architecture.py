@@ -1,6 +1,5 @@
-"""Octa Intelligence - Round 2b: Proposal Architecture."""
+"""Octa Intelligence - Round 2b: Proposal Architecture Generator."""
 import streamlit as st
-import json
 import re
 from modules.auth import require_auth
 from modules.sso import auto_login_from_url
@@ -11,11 +10,14 @@ from modules.database import (get_call_analyses, get_call_setup,
                                get_proposal_architectures,
                                create_proposal_architecture,
                                update_proposal_architecture, get_proposal)
-from modules.claude_client import run_round2b, _parse_json_response
+from modules.claude_client import (build_section_intelligence,
+                                   annotate_one_section,
+                                   generate_overall_advice,
+                                   _parse_json_response)
 from modules.word_export import export_architecture_docx
 from config import DARK as D, PROGRAMMES
 
-st.set_page_config(page_title="Architecture - Octa", page_icon="building_construction",
+st.set_page_config(page_title="Architecture - Octa", page_icon="🏗️",
                    layout="wide", initial_sidebar_state="expanded")
 inject_css(); auto_login_from_url(); require_auth(); sidebar_nav()
 
@@ -24,12 +26,12 @@ if not sel_pid: st.switch_page("app.py"); st.stop()
 
 proj    = get_proposal(sel_pid)
 acronym = proj.get("acronym","") or sel_pid
-page_header("Round 2b - Proposal Architecture",
-            f"{acronym} - AI-annotated skeleton with reviewer guidance", "building_construction")
-if st.button("Back to Dashboard"): st.switch_page("app.py")
+page_header("Round 2b — Proposal Architecture",
+            f"{acronym} — Section-by-section AI guidance saved live to database",
+            "🏗️")
+if st.button("← Dashboard"): st.switch_page("app.py")
 
 muted = D["muted"]; acc = D["accent"]
-user_id = st.session_state.get("user_id")
 
 analyses = get_call_analyses(sel_pid)
 complete = [a for a in analyses if a.get("status")=="complete"]
@@ -47,47 +49,37 @@ latest_concept = concepts[0] if concepts else None
 programme      = setup.get("programme","Horizon Europe - RIA") if setup else "Horizon Europe - RIA"
 prog_info      = PROGRAMMES.get(programme,{})
 
-section_label("Define Structure and Generate")
+# ── Structure definition ───────────────────────────────────────────────────────
+section_label("Step 1 — Define Your Proposal Structure")
 
-with st.expander("Structure Definition", expanded=not archs):
+with st.expander("Structure", expanded=not archs):
     template_sections = prog_info.get("structure",[])
     user_titles = {}
 
     if template_sections:
-        st.markdown(f"<p style='color:{muted};font-size:0.84rem'>Edit titles to customise. AI will annotate each section.</p>",
+        st.markdown(f"<p style='color:{muted};font-size:0.84rem'>Edit titles if needed. AI will annotate each one.</p>",
                     unsafe_allow_html=True)
         for sec in template_sections:
             sid   = sec.get("id","")
             level = sec.get("level",1)
             dflt  = sec.get("title","")
-            indent= "   " * (level - 1)
+            indent= "   " * (level-1)
             val   = st.text_input(f"{indent}Section {sid}", value=dflt, key=f"ts_{sid}")
-            if val != dflt:
-                user_titles[sid] = val
+            if val != dflt: user_titles[sid] = val
     else:
         st.markdown(
-            f"<p style='color:{muted};font-size:0.84rem'>"
-            f"Custom structure selected. Enter sections one per line. "
-            f"Use 2 spaces for subsections.</p>", unsafe_allow_html=True)
-
-        bg2 = D["bg2"]
-        st.markdown(
-            f"<div style='background:{bg2};border-left:3px solid {acc};"
+            f"<div style='background:{D["bg2"]};border-left:3px solid {acc};"
             f"border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.4rem;"
             f"font-size:0.78rem;color:{muted}'>"
-            f"Example: <code style='color:{acc}'>1. Excellence</code> then "
-            f"<code style='color:{acc}'>  1.1 Objectives</code> (2 spaces indent)"
-            f"</div>", unsafe_allow_html=True)
+            f"Enter sections one per line. 2 spaces indent = subsection.</div>",
+            unsafe_allow_html=True)
 
-        custom_text = st.text_area(
-            "Your Proposed Structure", height=250, key="cst",
+        custom_text = st.text_area("Your Structure", height=220, key="cst",
             placeholder=(
-                "1. Excellence\n  1.1 Objectives and Ambition\n  1.2 Methodology\n"
-                "  1.3 Innovation\n2. Impact\n  2.1 Expected Outcomes\n"
-                "  2.2 Dissemination\n3. Implementation\n  3.1 Work Plan\n"
-                "  3.2 Management\n  3.3 Consortium\n  3.4 Resources"
-            )
-        )
+                "1. Excellence\n  1.1 Objectives\n  1.2 Methodology\n"
+                "2. Impact\n  2.1 Outcomes\n  2.2 Dissemination\n"
+                "3. Implementation\n  3.1 Work Plan\n  3.2 Consortium"
+            ))
 
         if custom_text.strip():
             parsed_secs = []
@@ -96,118 +88,155 @@ with st.expander("Structure Definition", expanded=not archs):
                 stripped = line.strip()
                 if not stripped: continue
                 leading = len(line) - len(line.lstrip(" -"))
-                level   = 1 if leading == 0 else (2 if leading <= 3 else 3)
+                level   = 1 if leading==0 else (2 if leading<=3 else 3)
                 m       = re.match(r"^[0-9.]+[.)]\s*", stripped)
                 if m:
                     sec_id = m.group().strip().rstrip(".")
                     title  = stripped[m.end():].strip()
                 else:
-                    sec_id = str(len(parsed_secs) + 1)
+                    sec_id = str(len(parsed_secs)+1)
                     title  = stripped.lstrip("- ").strip()
                 order += 1
-                parsed_secs.append({"id": sec_id, "level": level,
-                                    "title": title, "order": order})
+                parsed_secs.append({"id":sec_id,"level":level,"title":title,"order":order})
             template_sections = parsed_secs
             suc = D["success"]
-            st.markdown(f"<span style='color:{suc}'>Ready: {len(parsed_secs)} sections defined</span>",
+            st.markdown(f"<span style='color:{suc}'>✅ {len(parsed_secs)} sections ready</span>",
                         unsafe_allow_html=True)
 
-if st.button("Generate Architecture", type="primary", use_container_width=True):
+# ── Generate button ────────────────────────────────────────────────────────────
+section_label("Step 2 — Generate Architecture (one section at a time)")
+
+st.markdown(
+    f"<p style='color:{muted};font-size:0.84rem'>"
+    f"Each section is sent to Claude individually and saved to the database immediately. "
+    f"Results appear live as they complete. "
+    f"Estimated time: ~{max(1,len(template_sections or [])) * 15} seconds.</p>",
+    unsafe_allow_html=True)
+
+if st.button("🏗️ Generate Architecture", type="primary", use_container_width=True):
     if not template_sections:
-        st.error("No sections defined. Add your structure above."); st.stop()
+        st.error("No sections defined above."); st.stop()
 
-    n_batches = max(1, (len(template_sections) + 3) // 4)
-    progress  = st.progress(0, text=f"Starting... 0/{n_batches} batches")
-    status_box= st.empty()
+    # Apply user title overrides
+    sections_to_process = []
+    for i, sec in enumerate(template_sections):
+        sid   = sec.get("id","")
+        title = user_titles.get(sid, sec.get("title",""))
+        sections_to_process.append({**sec, "title": title, "order": i+1})
 
-    import math
-    # Monkey-patch to show progress — we call run_round2b which does batches internally
-    status_box.info(f"Processing {len(template_sections)} sections in ~{n_batches} batches "
-                    f"(~{n_batches * 30} seconds)...")
+    n = len(sections_to_process)
 
-    result, raw_text = run_round2b(
-        structure_template = template_sections,
-        call_analysis      = analysis,
-        concept_evaluation = latest_concept,
-        programme          = programme,
-        user_custom_titles = user_titles if user_titles else None,
-    )
-    progress.progress(1.0, text="Done!")
-
+    # Create the architecture record first
     from datetime import datetime, timezone
-    sections = result.get("sections",[]) if result else []
-
     ok, arch_id = create_proposal_architecture({
         "proposal_id":           sel_pid,
         "call_analysis_id":      analysis["id"],
         "concept_evaluation_id": latest_concept["id"] if latest_concept else None,
         "api_mode":              "realtime",
-        "status":                "complete" if sections else "raw_only",
+        "status":                "processing",
         "programme":             programme,
         "structure_type":        "pre_built" if prog_info.get("structure") else "custom",
-        "sections":              sections,
-        "general_advice":        result.get("general_advice","") if result else "",
-        "top_5_priorities":      result.get("top_5_priorities",[]) if result else [],
-        "total_sections":        sum(1 for s in sections if s.get("level",1)==1),
-        "total_subsections":     sum(1 for s in sections if s.get("level",1)>1),
-        "raw_response":          (raw_text or "")[:5000],
-        "completed_at":          datetime.now(timezone.utc).isoformat(),
+        "sections":              [],
+        "total_sections":        sum(1 for s in sections_to_process if s.get("level",1)==1),
+        "total_subsections":     sum(1 for s in sections_to_process if s.get("level",1)>1),
+        "raw_response":          "",
+        "completed_at":          None,
     })
-    if ok:
-        status_box.success(f"Architecture complete - {len(sections)} sections annotated!")
-        st.rerun()
-    else:
-        st.error("Save failed.")
 
+    if not ok:
+        st.error(f"Database error: {arch_id}"); st.stop()
+
+    # Build intelligence once
+    intel = build_section_intelligence(analysis, latest_concept)
+
+    # Process each section with live progress
+    progress_bar = st.progress(0, text=f"Starting... 0/{n} sections")
+    status_text  = st.empty()
+    completed    = []
+    failed_count = 0
+
+    for i, sec in enumerate(sections_to_process):
+        sid   = sec.get("id","")
+        title = sec.get("title","")
+        level = sec.get("level",1)
+        indent= "  " * (level-1)
+
+        status_text.markdown(
+            f"<span style='color:{acc}'>{indent}⚙ Annotating [{sid}] {title}…</span>",
+            unsafe_allow_html=True)
+        progress_bar.progress((i+0.5)/n, text=f"Section {i+1}/{n}: {title[:35]}")
+
+        # Annotate this section
+        annotated = annotate_one_section(sec, intel, programme)
+        completed.append(annotated)
+        if annotated.get("_parse_failed"): failed_count += 1
+
+        # Save to database after EVERY section
+        update_proposal_architecture(arch_id, {"sections": completed})
+        progress_bar.progress((i+1)/n, text=f"Saved {i+1}/{n}: {title[:35]}")
+
+    # Generate overall advice
+    status_text.markdown(f"<span style='color:{acc}'>💡 Generating strategic advice…</span>",
+                         unsafe_allow_html=True)
+    titles_list = [s.get("ai_title","") or s.get("title","") for s in completed]
+    advice      = generate_overall_advice(intel, programme, titles_list)
+
+    # Final update
+    update_proposal_architecture(arch_id, {
+        "status":           "complete",
+        "sections":         completed,
+        "general_advice":   advice.get("general_advice",""),
+        "top_5_priorities": advice.get("top_5_priorities",[]),
+        "completed_at":     datetime.now(timezone.utc).isoformat(),
+    })
+
+    progress_bar.progress(1.0, text=f"✅ Complete — {n} sections saved to database")
+    status_text.empty()
+
+    if failed_count:
+        st.warning(f"⚠ {failed_count} section(s) used fallback text — use Regenerate below.")
+    else:
+        st.success(f"✅ All {n} sections annotated and saved!")
+    st.rerun()
+
+# ── Display results ────────────────────────────────────────────────────────────
 if not archs: st.stop()
 
 arch = archs[0]
 if len(archs) > 1:
-    idx = st.selectbox("Version", range(len(archs)),
-                       format_func=lambda i: (f"v{len(archs)-i}: "
-                                              f"{str(archs[i].get('created_at',''))[:10]} "
-                                              f"({archs[i].get('total_sections',0)} sections)"),
-                       key="arch_v")
+    idx  = st.selectbox("Version", range(len(archs)),
+                        format_func=lambda i: (f"v{len(archs)-i}: "
+                                               f"{str(archs[i].get('created_at',''))[:10]} "
+                                               f"({archs[i].get('total_sections',0)}s "
+                                               f"{archs[i].get('total_subsections',0)}ss) "
+                                               f"— {archs[i].get('status','')}"),
+                        key="arch_v")
     arch = archs[idx]
 
-sections  = arch.get("sections",[])
-_raw_arch = arch.get("raw_response","")
+sections = arch.get("sections",[])
 
-if not sections and _raw_arch:
+# Processing badge
+if arch.get("status") == "processing":
     warn = D["warning"]
     st.markdown(
-        f"<div style='background:{warn}22;border:1px solid {warn};border-radius:10px;"
-        f"padding:0.9rem 1.2rem;margin-bottom:0.8rem'>"
-        f"<strong style='color:{warn}'>Sections could not be parsed.</strong> "
-        f"Click Re-Parse to retry.</div>", unsafe_allow_html=True)
-    if st.button("Re-Parse Architecture", type="primary"):
-        r2 = _parse_json_response(_raw_arch)
-        if r2 and r2.get("sections"):
-            secs = r2["sections"]
-            update_proposal_architecture(arch["id"], {
-                "sections":         secs,
-                "total_sections":   sum(1 for s in secs if s.get("level",1)==1),
-                "total_subsections":sum(1 for s in secs if s.get("level",1)>1),
-                "status":           "complete",
-            })
-            st.success("Re-parsed!"); st.rerun()
-    with st.expander("Raw AI Response", expanded=True):
-        st.markdown(
-            f"<div style='background:{D["bg2"]};border-radius:8px;padding:1rem;"
-            f"white-space:pre-wrap;font-size:0.82rem;color:{D["text"]}'>"
-            f"{_raw_arch}</div>", unsafe_allow_html=True)
-    st.stop()
+        f"<div style='background:{warn}22;border:1px solid {warn};border-radius:8px;"
+        f"padding:0.7rem 1rem;margin-bottom:0.8rem'>"
+        f"<strong style='color:{warn}'>⏳ Generation in progress…</strong> "
+        f"Refresh to see latest sections ({len(sections)} saved so far)."
+        f"</div>", unsafe_allow_html=True)
+    if st.button("🔄 Refresh"): st.rerun()
 
 if not sections:
-    st.info("No sections yet. Generate an architecture above."); st.stop()
+    st.info("No sections yet. Click Generate Architecture above."); st.stop()
 
-section_label(f"Annotated Architecture - {len(sections)} sections")
+section_label(f"📋 Architecture — {len(sections)} sections")
 
+# Downloads
 dc1, dc2 = st.columns(2)
 with dc1:
     doc_bytes = export_architecture_docx(arch, analysis, sel_pid, acronym)
     st.download_button(
-        "Download Architecture (Word - colour-coded guidance)",
+        "📥 Download Architecture (Word)",
         data=doc_bytes,
         file_name=f"{acronym}_Proposal_Architecture.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -217,64 +246,43 @@ with dc2:
     st.markdown(
         f"<div style='background:{D["bg2"]};border-radius:8px;padding:0.6rem 0.9rem;"
         f"font-size:0.8rem;color:{muted}'>"
-        f"Red = Reviewer guidance  Blue = Policy  Green = Keywords  Amber = Evidence"
+        f"🔴 Reviewer guidance  🔵 Policy  🟢 Keywords  🟡 Evidence"
         f"</div>", unsafe_allow_html=True)
 
-# Detect sections that got generic fallback content
-failed_secs = [s for s in sections if s.get("_parse_failed")]
-if failed_secs:
+# Regenerate failed sections
+failed = [s for s in sections if s.get("_parse_failed")]
+if failed:
     warn = D["warning"]
     st.markdown(
-        f"<div style='background:{warn}22;border:1px solid {warn};"
-        f"border-radius:10px;padding:0.8rem 1.2rem;margin-bottom:0.8rem'>"
-        f"<strong style='color:{warn}'>⚠ {len(failed_secs)} section(s) received generic content</strong> "
-        f"(batch parsing failed for those sections).<br>"
-        f"<span style='color:{D["muted"]};font-size:0.83rem'>"
-        f"Click below to regenerate them one by one with targeted prompts.</span></div>",
+        f"<div style='background:{warn}22;border:1px solid {warn};border-radius:8px;"
+        f"padding:0.7rem 1rem;margin-bottom:0.5rem'>"
+        f"<strong style='color:{warn}'>⚠ {len(failed)} section(s) need regeneration</strong></div>",
         unsafe_allow_html=True)
-    if st.button(f"🔄 Regenerate {len(failed_secs)} Failed Section(s)",
-                 type="primary", key="regen_failed"):
-        from modules.claude_client import (_annotate_single_section,
-                                           get_call_analyses, get_concept_evaluations)
-        intelligence = {
-            "objectives": "; ".join(
-                o.get("title","") for o in analysis.get("call_objectives",[])[:5]),
-            "keywords": [k.get("keyword","")
-                         for k in analysis.get("master_keywords",[])
-                         if k.get("importance") in ("critical","high")][:10],
-            "policies": [],
-            "gaps": "",
-        }
-        pf = analysis.get("policy_framing",{})
-        if isinstance(pf, dict):
-            intelligence["policies"] = [p.get("policy","")
-                                        for p in pf.get("primary_policies",[])[:4]]
-
-        updated_sections = list(sections)
-        prog = st.progress(0)
-        for i, sec in enumerate(updated_sections):
+    if st.button(f"🔄 Regenerate {len(failed)} Failed Section(s)", key="regen"):
+        intel2 = build_section_intelligence(analysis, latest_concept)
+        updated = list(sections)
+        prog2   = st.progress(0)
+        for i, sec in enumerate(updated):
             if sec.get("_parse_failed"):
-                prog.progress((i+1)/len(updated_sections),
-                              text=f"Regenerating section {sec.get('id','')}...")
-                new_sec = _annotate_single_section(sec, intelligence, programme)
-                updated_sections[i] = new_sec
-
-        prog.progress(1.0, text="Done!")
-        update_proposal_architecture(arch["id"], {"sections": updated_sections})
-        st.success("✅ Failed sections regenerated!"); st.rerun()
+                prog2.progress((i+1)/len(updated), text=f"Regenerating {sec.get('id','')}...")
+                updated[i] = annotate_one_section(sec, intel2, programme)
+                update_proposal_architecture(arch["id"], {"sections": updated})
+        prog2.progress(1.0)
+        st.success("✅ Done!"); st.rerun()
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# General advice + priorities
 if arch.get("general_advice"):
-    with st.expander("Strategic Advice", expanded=True):
+    with st.expander("💡 Strategic Advice", expanded=True):
         st.markdown(
             f"<div style='background:{D["bg2"]};border-left:4px solid {acc};"
-            f"border-radius:8px;padding:1rem 1.2rem'>{arch['general_advice']}</div>",
+            f"border-radius:8px;padding:1rem 1.2rem'>{arch["general_advice"]}</div>",
             unsafe_allow_html=True)
 
 if arch.get("top_5_priorities"):
-    with st.expander("Top 5 Priorities", expanded=True):
-        for i, p in enumerate(arch["top_5_priorities"], 1):
+    with st.expander("⭐ Top 5 Priorities", expanded=True):
+        for i, p in enumerate(arch["top_5_priorities"],1):
             suc = D["success"]
             st.markdown(
                 f"<div style='background:{D["bg2"]};border-left:3px solid {suc};"
@@ -290,64 +298,77 @@ for sec in sorted(sections, key=lambda x: x.get("order",0)):
     orig  = sec.get("original_title","")
     title = sec.get("ai_title","") or orig or sec.get("title","")
     sid   = sec.get("id","")
+    failed_sec = sec.get("_parse_failed",False)
 
-    colors = [acc, D["accent2"], D["muted"]]
-    bc     = colors[min(level-1, 2)]
+    lvl_colors = [acc, D["accent2"], D["muted"]]
+    bc = lvl_colors[min(level-1,2)]
 
-    with st.expander(f"{'#'*level} {sid} - {title}", expanded=(level==1)):
+    label = f"{'#'*level} {sid} — {title}"
+    if failed_sec:
+        label += "  ⚠️ (needs regeneration)"
 
-        if title != orig and orig:
+    with st.expander(label, expanded=(level==1 and not failed_sec)):
+        if failed_sec:
             warn = D["warning"]
             st.markdown(
-                f"<div style='background:{warn}11;border-left:3px solid {warn};"
-                f"border-radius:6px;padding:0.3rem 0.7rem;margin-bottom:0.4rem;"
-                f"font-size:0.78rem;color:{warn}'>"
-                f"Enhanced from: {orig}</div>", unsafe_allow_html=True)
+                f"<div style='background:{warn}22;border-left:3px solid {warn};"
+                f"border-radius:6px;padding:0.4rem 0.8rem;font-size:0.81rem;"
+                f"color:{warn};margin-bottom:0.4rem'>"
+                f"⚠ This section used generic fallback. Click Regenerate above.</div>",
+                unsafe_allow_html=True)
 
-        c1, c2 = st.columns([3, 2])
+        if title != orig and orig:
+            st.caption(f"Enhanced from: {orig}")
+
+        c1, c2 = st.columns([3,2])
+
+        def _safe_list(v):
+            if not v: return []
+            if isinstance(v,list): return [str(x) for x in v]
+            return [str(v)]
+
+        def _safe_pol(p):
+            if isinstance(p,dict):
+                t = p.get("policy","") or p.get("name","") or str(p)
+                h = p.get("how","") or p.get("connection","")
+                return f"{t} — {h}" if h else t
+            return str(p)
 
         with c1:
-            rg = sec.get("reviewer_guidance",[])
+            rg = _safe_list(sec.get("reviewer_guidance"))
             if rg:
                 danger = D["danger"]
-                items  = rg if isinstance(rg, list) else [str(rg)]
-                pts    = "".join(f"<div style='margin:2px 0'>&#8226; {p}</div>" for p in items)
+                pts = "".join(f"<div style='margin:2px 0'>&#8226; {p}</div>" for p in rg)
                 st.markdown(
                     f"<div style='background:{danger}11;border-left:4px solid {danger};"
                     f"border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.5rem'>"
-                    f"<strong style='color:{danger}'>REVIEWER EXPECTS:</strong><br>"
+                    f"<strong style='color:{danger}'>🔴 REVIEWER EXPECTS:</strong><br>"
                     f"<div style='color:{D["text"]};font-size:0.84rem;margin-top:0.25rem'>"
                     f"{pts}</div></div>", unsafe_allow_html=True)
 
-            pc = sec.get("policy_connections",[])
+            pc = sec.get("policy_connections")
             if pc:
                 blue  = "#4488CC"
-                items = pc if isinstance(pc, list) else [str(pc)]
-                if items and isinstance(items[0], dict):
-                    pts = "".join(
-                        f"<div style='margin:2px 0'>&#8226; <b>{p.get('policy','')}</b>"
-                        + (f" - {p.get('how','')}" if p.get('how') else "") + "</div>"
-                        for p in items)
-                else:
-                    pts = "".join(f"<div style='margin:2px 0'>&#8226; {p}</div>" for p in items)
+                items = pc if isinstance(pc,list) else [pc]
+                pts   = "".join(f"<div style='margin:2px 0'>&#8226; {_safe_pol(p)}</div>"
+                                for p in items)
                 st.markdown(
                     f"<div style='background:{blue}11;border-left:4px solid {blue};"
                     f"border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.5rem'>"
-                    f"<strong style='color:{blue}'>POLICY CONNECTIONS:</strong><br>"
+                    f"<strong style='color:{blue}'>🔵 POLICY CONNECTIONS:</strong><br>"
                     f"<div style='color:{D["text"]};font-size:0.84rem;margin-top:0.25rem'>"
                     f"{pts}</div></div>", unsafe_allow_html=True)
 
         with c2:
-            kws = sec.get("keywords_to_include",[])
+            kws = _safe_list(sec.get("keywords_to_include"))
             if kws:
                 green = D["success"]
-                kw_list = kws if isinstance(kws, list) else [str(kws)]
                 st.markdown(
                     f"<div style='background:{green}11;border-left:4px solid {green};"
                     f"border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.4rem'>"
-                    f"<strong style='color:{green}'>KEYWORDS:</strong><br>"
+                    f"<strong style='color:{green}'>🟢 KEYWORDS:</strong><br>"
                     f"<span style='color:{D["text"]};font-size:0.82rem'>"
-                    + " &nbsp;&#183;&nbsp; ".join(kw_list)
+                    + " &nbsp;&#183;&nbsp; ".join(kws)
                     + "</span></div>", unsafe_allow_html=True)
 
             ev = sec.get("measures_and_evidence","")
@@ -356,17 +377,16 @@ for sec in sorted(sections, key=lambda x: x.get("order",0)):
                 st.markdown(
                     f"<div style='background:{amber}11;border-left:4px solid {amber};"
                     f"border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.4rem'>"
-                    f"<strong style='color:{amber}'>EVIDENCE NEEDED:</strong><br>"
+                    f"<strong style='color:{amber}'>🟡 EVIDENCE NEEDED:</strong><br>"
                     f"<span style='color:{D["text"]};font-size:0.82rem'>{ev}</span>"
                     f"</div>", unsafe_allow_html=True)
 
             wc = sec.get("word_count_guidance","")
-            cm = sec.get("common_mistakes",[])
-            if wc:
-                st.caption(f"Length: {wc}")
+            cm = _safe_list(sec.get("common_mistakes"))
+            if wc: st.caption(f"📏 {wc}")
             if cm:
-                with st.expander("Common mistakes to avoid"):
-                    for m in (cm if isinstance(cm,list) else [str(cm)]):
+                with st.expander("Mistakes to avoid"):
+                    for m in cm:
                         st.markdown(
                             f"<span style='color:{D["danger"]};font-size:0.81rem'>&#x2717; {m}</span>",
                             unsafe_allow_html=True)
@@ -374,8 +394,8 @@ for sec in sorted(sections, key=lambda x: x.get("order",0)):
 st.markdown("<br>")
 b1, b2 = st.columns(2)
 with b1:
-    if st.button("Run Mini Review", type="primary", use_container_width=True):
+    if st.button("🎯 Run Mini Review", type="primary", use_container_width=True):
         st.switch_page("pages/mini_review.py")
 with b2:
-    if st.button("Back to Round 2a", use_container_width=True):
+    if st.button("← Round 2a", use_container_width=True):
         st.switch_page("pages/round2a_concept.py")
