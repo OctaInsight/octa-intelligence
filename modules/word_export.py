@@ -254,7 +254,9 @@ def export_architecture_docx(architecture: dict, analysis: dict,
             p = doc.add_paragraph()
             run = p.add_run("🔴 REVIEWER EXPECTS:")
             run.bold = True; run.font.color.rgb = RED
-            for point in sec["reviewer_guidance"]:
+            rg = sec["reviewer_guidance"]
+            points = rg if isinstance(rg, list) else [str(rg)]
+            for point in points:
                 bp = doc.add_paragraph(f"  • {point}", style="List Bullet")
                 for run in bp.runs:
                     run.font.color.rgb = RED
@@ -277,7 +279,9 @@ def export_architecture_docx(architecture: dict, analysis: dict,
             p = doc.add_paragraph()
             run = p.add_run("🟢 KEYWORDS: ")
             run.bold = True; run.font.color.rgb = GREEN
-            kw_run = p.add_run(" · ".join(sec["keywords_to_include"]))
+            kws = sec["keywords_to_include"]
+            kw_str = " · ".join(kws) if isinstance(kws, list) else str(kws)
+            kw_run = p.add_run(kw_str)
             kw_run.font.color.rgb = GREEN
 
         # Evidence & measures (AMBER)
@@ -300,7 +304,9 @@ def export_architecture_docx(architecture: dict, analysis: dict,
             p = doc.add_paragraph()
             run = p.add_run("⚠ AVOID:")
             run.bold = True; run.font.color.rgb = RGBColor(0x99,0x33,0x00)
-            for m in sec["common_mistakes"]:
+            cm = sec["common_mistakes"]
+            mistakes = cm if isinstance(cm, list) else [str(cm)]
+            for m in mistakes:
                 bp = doc.add_paragraph(f"  ✗ {m}", style="List Bullet")
                 for run in bp.runs:
                     run.font.color.rgb = RGBColor(0x99,0x33,0x00)
