@@ -203,6 +203,56 @@ if analysis.get("status") != "complete":
 
 section_label("📊 Analysis Results")
 
+# Check if structured data exists or only raw text
+_has_structure = bool(
+    analysis.get("call_objectives") or
+    analysis.get("expected_outcomes") or
+    analysis.get("strategic_recommendations")
+)
+_raw = analysis.get("raw_response","") or analysis.get("hidden_messages","")
+
+if not _has_structure and _raw:
+    warn = D["warning"]
+    st.markdown(
+        f"<div style='background:{warn}22;border:1px solid {warn};border-radius:10px;"
+        f"padding:1rem 1.3rem;margin-bottom:1rem'>"
+        f"<strong style='color:{warn}'>⚠ Structured parsing failed — showing raw AI response below.</strong><br>"
+        f"<span style='color:{D["muted"]};font-size:0.85rem'>"
+        f"The analysis ran and Claude responded, but the JSON could not be parsed. "
+        f"You can read the raw response below and click Re-Parse to try again.</span></div>",
+        unsafe_allow_html=True)
+
+    if st.button("🔄 Re-Parse Raw Response", type="primary", key="reparse"):
+        from modules.claude_client import _parse_json_response
+        from modules.database import update_call_analysis
+        result2 = _parse_json_response(_raw)
+        if result2:
+            from datetime import datetime, timezone
+            update_call_analysis(analysis["id"], {
+                "call_objectives":           result2.get("call_objectives",[]),
+                "expected_outcomes":         result2.get("expected_outcomes",[]),
+                "expected_impacts":          result2.get("expected_impacts",[]),
+                "expected_outputs":          result2.get("expected_outputs",[]),
+                "recommended_kpis":          result2.get("recommended_kpis",[]),
+                "policy_framing":            result2.get("policy_framing",{}),
+                "master_keywords":           result2.get("master_keywords",[]),
+                "synergy_initiatives":       result2.get("synergy_initiatives",[]),
+                "hidden_messages":           result2.get("hidden_messages",""),
+                "expected_partner_profiles": result2.get("expected_partner_profiles",[]),
+                "consortium_positioning":    result2.get("consortium_positioning",""),
+                "strategic_recommendations": result2.get("strategic_recommendations",[]),
+            })
+            st.success("✅ Re-parsed successfully!"); st.rerun()
+        else:
+            st.error("Still could not parse JSON. See raw response below.")
+
+    with st.expander("📄 Raw AI Response (read directly)", expanded=True):
+        st.markdown(
+            f"<div style='background:{D["bg2"]};border-radius:8px;padding:1rem;"
+            f"white-space:pre-wrap;font-size:0.83rem;color:{D["text"]}'>"
+            f"{_raw}</div>", unsafe_allow_html=True)
+    st.stop()
+
 # Download Word doc
 docx_bytes = export_round1_docx(analysis, sel_pid, acronym)
 st.download_button(
