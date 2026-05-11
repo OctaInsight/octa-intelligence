@@ -220,6 +220,49 @@ with dc2:
         f"Red = Reviewer guidance  Blue = Policy  Green = Keywords  Amber = Evidence"
         f"</div>", unsafe_allow_html=True)
 
+# Detect sections that got generic fallback content
+failed_secs = [s for s in sections if s.get("_parse_failed")]
+if failed_secs:
+    warn = D["warning"]
+    st.markdown(
+        f"<div style='background:{warn}22;border:1px solid {warn};"
+        f"border-radius:10px;padding:0.8rem 1.2rem;margin-bottom:0.8rem'>"
+        f"<strong style='color:{warn}'>⚠ {len(failed_secs)} section(s) received generic content</strong> "
+        f"(batch parsing failed for those sections).<br>"
+        f"<span style='color:{D["muted"]};font-size:0.83rem'>"
+        f"Click below to regenerate them one by one with targeted prompts.</span></div>",
+        unsafe_allow_html=True)
+    if st.button(f"🔄 Regenerate {len(failed_secs)} Failed Section(s)",
+                 type="primary", key="regen_failed"):
+        from modules.claude_client import (_annotate_single_section,
+                                           get_call_analyses, get_concept_evaluations)
+        intelligence = {
+            "objectives": "; ".join(
+                o.get("title","") for o in analysis.get("call_objectives",[])[:5]),
+            "keywords": [k.get("keyword","")
+                         for k in analysis.get("master_keywords",[])
+                         if k.get("importance") in ("critical","high")][:10],
+            "policies": [],
+            "gaps": "",
+        }
+        pf = analysis.get("policy_framing",{})
+        if isinstance(pf, dict):
+            intelligence["policies"] = [p.get("policy","")
+                                        for p in pf.get("primary_policies",[])[:4]]
+
+        updated_sections = list(sections)
+        prog = st.progress(0)
+        for i, sec in enumerate(updated_sections):
+            if sec.get("_parse_failed"):
+                prog.progress((i+1)/len(updated_sections),
+                              text=f"Regenerating section {sec.get('id','')}...")
+                new_sec = _annotate_single_section(sec, intelligence, programme)
+                updated_sections[i] = new_sec
+
+        prog.progress(1.0, text="Done!")
+        update_proposal_architecture(arch["id"], {"sections": updated_sections})
+        st.success("✅ Failed sections regenerated!"); st.rerun()
+
 st.markdown("<br>", unsafe_allow_html=True)
 
 if arch.get("general_advice"):
