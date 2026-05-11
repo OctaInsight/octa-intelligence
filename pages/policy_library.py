@@ -10,7 +10,10 @@ from modules.document_processor import (extract_from_pdf, extract_from_docx,
                                          extract_from_url, prepare_text_for_storage,
                                          count_words, estimate_tokens)
 from modules.claude_client import generate_document_summary
-from modules.drive_manager import upload_policy_document, test_drive_connection
+from modules.storage_manager import (upload_policy_document,
+                                      test_storage_connection,
+                                      delete_policy_document_file)
+from modules.database import get_policy_document
 from config import (DARK as D, POLICY_CATEGORIES, POLICY_TIERS, PROGRAMMES)
 
 st.set_page_config(page_title="Policy Library — Octa", page_icon="📚",
@@ -140,7 +143,7 @@ with st.expander("Upload New Policy Document", expanded=not all_docs):
         drive_info = {}
         if file_bytes and file_name:
             with progress:
-                st.info(f"☁ Step 3/4 — Uploading '{file_name}' to Google Drive…")
+                st.info(f"☁ Step 3/4 — Uploading '{file_name}' to Supabase Storage…")
                 st.info("Uploading to Google Drive…")
                 drive_info = upload_policy_document(
                     file_bytes, file_name, mime_type, tier_key, category
@@ -148,10 +151,10 @@ with st.expander("Upload New Policy Document", expanded=not all_docs):
 
             if drive_info:
                 with progress:
-                    st.success(f"✅ Uploaded to Drive: {drive_info.get('folder_path','')}")
+                    st.success(f"✅ Uploaded to Supabase Storage: {drive_info.get('folder_path','')}")
             else:
                 with progress:
-                    st.warning("⚠ Drive upload failed — document will be saved to Supabase only")
+                    st.warning("⚠ Storage upload failed — metadata saved to database only")
         else:
             with progress:
                 st.info("⏭ Step 3/4 — No file to upload to Drive (URL source)")
@@ -270,7 +273,11 @@ for tier in TIER_ORDER:
                             unsafe_allow_html=True)
                     if st.button("🗑", key=f"del_doc_{did}",
                                   help="Remove from library"):
-                        delete_policy_document(did); st.rerun()
+                        _d = get_policy_document(did)
+                        if _d and _d.get("drive_file_id"):
+                            delete_policy_document_file(_d["drive_file_id"])
+                        delete_policy_document(did)
+                        st.rerun()
 
 if selection_mode and selected_ids:
     suc=D["success"]
