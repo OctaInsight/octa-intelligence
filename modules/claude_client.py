@@ -86,89 +86,89 @@ def _parse_json_response(text: str) -> dict | list | None:
 # ROUND 1 — CALL INTELLIGENCE ANALYSIS
 # ════════════════════════════════════════════════════════════════════════════════
 
-ROUND1_SYSTEM = """You are a senior EU research funding strategist with 20 years of experience winning competitive grants. You analyse funding calls and produce strategic intelligence reports that help consortia craft winning proposals.
-
-CRITICAL INSTRUCTION: Your entire response must be a single valid JSON object. Do NOT include any text before or after the JSON. Do NOT use markdown code blocks. Do NOT include ```json or ```. Start your response with { and end with }. Nothing else."""
+ROUND1_SYSTEM = (
+    "You are an EU research funding strategist. "
+    "Analyse the funding call and return ONLY a JSON object. "
+    "No markdown. No code fences. No explanation. "
+    "Start with { and end with }. Nothing else."
+)
 
 def build_round1_prompt(call_text: str, policy_texts: dict,
                          guide_text: str, briefing: dict) -> str:
-    """
-    Build the Round 1 analysis prompt.
-    policy_texts: {title: text}
-    briefing: consortium briefing dict
-    """
-    policy_section = ""
-    for title, text in policy_texts.items():
-        policy_section += f"\n\n=== POLICY DOCUMENT: {title} ===\n{text[:30000]}"
+    """Build the Round 1 analysis prompt — kept concise to ensure valid JSON output."""
 
-    guide_section = f"\n\n=== REVIEWER GUIDELINES ===\n{guide_text}" if guide_text else ""
+    # Truncate inputs to stay well within token limits
+    call_snippet   = call_text[:25000]
+    guide_snippet  = guide_text[:8000] if guide_text else ""
+    policy_snippet = ""
+    for title, text in list(policy_texts.items())[:4]:   # max 4 policy docs
+        policy_snippet += f"\n\n### {title}\n{text[:6000]}"
 
-    briefing_section = f"""
-=== CONSORTIUM BRIEFING ===
-Coordinator: {briefing.get('coordinator_name','')} ({briefing.get('coordinator_type','')})
-Consortium strategy: {briefing.get('consortium_strategy','')}
-Unique selling point: {briefing.get('unique_selling_point','')}
-Competitive advantage: {briefing.get('competitive_advantage','')}
-Geographic coverage: {briefing.get('geographic_rationale','')}
-Innovation type: {briefing.get('innovation_type','')}
-Partner profiles: {json.dumps(briefing.get('partner_profiles',[]), indent=2)[:3000]}
-Additional notes: {briefing.get('additional_notes','')}
-"""
+    briefing_snippet = (
+        f"Coordinator: {briefing.get('coordinator_name','')}\n"
+        f"Strategy: {briefing.get('consortium_strategy','')}\n"
+        f"Strengths: {briefing.get('unique_selling_point','')}\n"
+        f"Advantage: {briefing.get('competitive_advantage','')}\n"
+        f"Notes: {briefing.get('additional_notes','')}"
+    )
 
-    return f"""Analyse the following funding call and related documents. 
-Produce a comprehensive strategic intelligence report as a JSON object.
+    prompt = f"""Analyse this EU funding call and return a JSON intelligence report.
 
 === CALL TEXT ===
-{call_text[:80000]}
-{policy_section}
-{guide_section}
-{briefing_section}
+{call_snippet}
+"""
+    if guide_snippet:
+        prompt += f"""
+=== REVIEWER GUIDELINES ===
+{guide_snippet}
+"""
+    if policy_snippet:
+        prompt += f"""
+=== POLICY DOCUMENTS ===
+{policy_snippet}
+"""
+    prompt += f"""
+=== OUR CONSORTIUM ===
+{briefing_snippet}
 
-Your response must be ONLY a JSON object — no markdown, no explanation, no code fences.
-Start directly with {{ and end with }}. 
-
-Return a JSON object with exactly these keys:
-
+Return ONLY this JSON object (no markdown, no code fences, start with {{):
 {{
   "call_objectives": [
-    {{"id": 1, "title": "...", "description": "...", "priority": "primary|secondary", "evidence": "quote from call"}}
+    {{"title": "Objective 1", "description": "...", "priority": "primary"}}
   ],
   "expected_outcomes": [
-    {{"id": 1, "outcome": "...", "timeframe": "...", "measurability": "high|medium|low"}}
+    {{"outcome": "...", "timeframe": "short-term"}}
   ],
   "expected_impacts": [
-    {{"id": 1, "impact": "...", "level": "scientific|economic|social|policy", "timeframe": "short|medium|long"}}
+    {{"impact": "...", "level": "scientific|economic|social|policy"}}
   ],
   "expected_outputs": [
-    {{"id": 1, "output": "...", "type": "tool|report|platform|dataset|methodology|guidelines|other"}}
+    {{"output": "...", "type": "tool|report|platform|dataset|other"}}
   ],
   "recommended_kpis": [
-    {{"id": 1, "kpi": "...", "unit": "...", "source": "explicit|implied", "target_type": "quantitative|qualitative"}}
+    {{"kpi": "...", "unit": "..."}}
   ],
   "policy_framing": {{
-    "primary_policies": [
-      {{"policy": "...", "relevance_score": 1-10, "how_call_references": "...", "key_targets_to_mention": ["..."]}}
-    ],
-    "secondary_policies": [
-      {{"policy": "...", "relevance_score": 1-10, "connection": "..."}}
-    ],
-    "policy_narrative": "3-5 sentence explanation of how the call sits within the EU policy landscape"
+    "primary_policies": [{{"policy": "...", "relevance_score": 8, "how_call_references": "..."}}],
+    "policy_narrative": "How this call fits within EU policy..."
   }},
   "master_keywords": [
-    {{"keyword": "...", "frequency": 0, "importance": "critical|high|medium", "source": "call|guide|policy|all"}}
+    {{"keyword": "...", "importance": "critical|high|medium"}}
   ],
   "synergy_initiatives": [
-    {{"name": "...", "type": "project|programme|initiative|platform", "description": "...", "how_to_build_synergy": "..."}}
+    {{"name": "...", "description": "...", "how_to_build_synergy": "..."}}
   ],
-  "hidden_messages": "Free text — what is implicitly expected but not explicitly stated in the call",
+  "hidden_messages": "What is implicitly expected but not stated in the call...",
   "expected_partner_profiles": [
-    {{"profile_type": "...", "description": "...", "role": "coordinator|partner|associate", "is_mandatory": true}}
+    {{"profile_type": "...", "description": "...", "role": "coordinator|partner"}}
   ],
-  "consortium_positioning": "Specific assessment of how THIS consortium (from the briefing) is positioned. What are their strengths, gaps, and strategic recommendations given the call requirements.",
+  "consortium_positioning": "How our consortium is positioned relative to this call...",
   "strategic_recommendations": [
-    {{"priority": 1, "recommendation": "...", "rationale": "...", "action": "..."}}
+    {{"priority": 1, "recommendation": "...", "action": "..."}}
   ]
 }}"""
+    return prompt
+
 
 
 def run_round1_realtime(call_text: str, policy_texts: dict,
