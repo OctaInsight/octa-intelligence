@@ -295,85 +295,123 @@ Return ONLY this JSON (no markdown, start with {{):
 # ROUND 2b — PROPOSAL ARCHITECTURE
 # ════════════════════════════════════════════════════════════════════════════════
 
+def _annotate_single_section(sec: dict, intelligence: dict, programme: str) -> dict:
+    """Annotate a single section. Used when batch parsing fails."""
+    system = (
+        "You are an EU proposal writing expert. "
+        "Return ONLY a JSON object. Start with { and end with }. No markdown."
+    )
+    kws  = ", ".join(intelligence.get("keywords",[])[:8])
+    pols = "; ".join(intelligence.get("policies",[])[:3])
+    sid  = sec.get("id","")
+    title= sec.get("title","")
+    lvl  = sec.get("level",1)
+
+    prompt = f"""Annotate this single {programme} proposal section.
+
+Section: [{sid}] {title} (level {lvl})
+Call keywords: {kws}
+Key policies: {pols}
+Objectives: {intelligence.get("objectives","")[:300]}
+
+Return ONLY:
+{{
+  "id": "{sid}",
+  "level": {lvl},
+  "original_title": "{title}",
+  "ai_title": "improved title",
+  "reviewer_guidance": ["What reviewer expects - specific point 1", "Point 2", "Point 3"],
+  "policy_connections": ["Relevant policy - how to cite"],
+  "keywords_to_include": ["keyword1", "keyword2", "keyword3"],
+  "measures_and_evidence": "Specific data, KPIs or evidence to include",
+  "word_count_guidance": "300-500 words",
+  "common_mistakes": ["Common mistake to avoid"]
+}}"""
+
+    raw    = _call_realtime(system, prompt, max_tokens=800)
+    parsed = _parse_json_response(raw) if raw else None
+    if isinstance(parsed, dict) and parsed.get("reviewer_guidance"):
+        parsed["_parse_failed"] = False
+        return parsed
+    # Final fallback - still better than nothing
+    return {
+        "id": sid, "level": lvl,
+        "original_title": title, "ai_title": title,
+        "reviewer_guidance": [f"Address the call objectives related to {title}",
+                               "Show clear methodology and innovation",
+                               "Demonstrate alignment with EU policy priorities"],
+        "policy_connections": [p for p in intelligence.get("policies",[])[:2]],
+        "keywords_to_include": intelligence.get("keywords",[])[:4],
+        "measures_and_evidence": "Include relevant KPIs, baselines and evidence of impact",
+        "word_count_guidance": "300-500 words",
+        "common_mistakes": ["Being too generic", "Missing call-specific terminology"],
+        "_parse_failed": True,
+    }
+
+
 def _annotate_section_batch(sections_batch: list, intelligence: dict,
                              programme: str) -> list:
     """
-    Annotate a small batch of sections (3-5 at a time).
-    Returns list of annotated section dicts.
+    Annotate a batch of sections (3 at a time).
+    Falls back to single-section calls if batch parsing fails.
     """
     system = (
-        "You are an expert EU proposal writer. "
-        "Return ONLY a JSON array. No markdown. No code fences. "
-        "Start with [ and end with ]. Nothing else."
+        "You are an EU proposal writing expert. "
+        "Return ONLY a JSON array starting with [ and ending with ]. "
+        "No markdown. No code fences. Nothing before [ or after ]."
     )
 
-    # Build compact intel string
-    kws = ", ".join(intelligence.get("keywords",[])[:10])
-    pols = "; ".join(intelligence.get("policies",[])[:4])
-    gaps = intelligence.get("gaps","")
-    objectives = intelligence.get("objectives","")
+    kws  = ", ".join(intelligence.get("keywords",[])[:8])
+    pols = "; ".join(intelligence.get("policies",[])[:3])
 
-    # Sections as simple list
-    sec_list = chr(10).join(
-        f'{i+1}. [{s.get("id","")}] {s.get("title","")} (level {s.get("level",1)})'
-        for i, s in enumerate(sections_batch)
+    # Very simple section list
+    sec_lines = chr(10).join(
+        f'{s.get("id",i+1)}|{s.get("title","")}|{s.get("level",1)}'
+        for i,s in enumerate(sections_batch)
     )
 
-    prompt = f"""Annotate these {programme} proposal sections with writing guidance.
+    prompt = f"""Annotate these {programme} sections. Format: id|title|level
 
-CALL CONTEXT:
-- Objectives: {objectives}
-- Keywords: {kws}
-- Policies: {pols}
-- Gaps to address: {gaps}
+{sec_lines}
 
-SECTIONS TO ANNOTATE:
-{sec_list}
+Call context: {intelligence.get("objectives","")[:200]}
+Keywords: {kws}
+Policies: {pols}
 
-Return a JSON ARRAY with one object per section:
+Return a JSON ARRAY, one object per section shown above:
 [
   {{
-    "id": "section id",
+    "id": "exact id from above",
     "level": 1,
-    "original_title": "original",
-    "ai_title": "improved title aligned with call",
-    "reviewer_guidance": ["What reviewer checks here - point 1", "Point 2", "Point 3"],
-    "policy_connections": ["Policy name - how to reference it"],
-    "keywords_to_include": ["keyword1", "keyword2", "keyword3"],
-    "measures_and_evidence": "What data, KPIs or baselines to include here",
-    "word_count_guidance": "300-500 words",
-    "common_mistakes": ["Mistake to avoid"]
+    "original_title": "exact title from above",
+    "ai_title": "improved title",
+    "reviewer_guidance": ["Specific point 1 reviewers check", "Point 2", "Point 3"],
+    "policy_connections": ["Policy - how to reference"],
+    "keywords_to_include": ["kw1", "kw2", "kw3"],
+    "measures_and_evidence": "What data/KPIs to include",
+    "word_count_guidance": "X-Y words",
+    "common_mistakes": ["Mistake 1"]
   }}
 ]"""
 
-    raw = _call_realtime(system, prompt, max_tokens=3000)
-    if not raw:
-        return []
+    raw    = _call_realtime(system, prompt, max_tokens=2500)
+    parsed = _parse_json_response(raw) if raw else None
 
-    # Try to parse as array
-    parsed = _parse_json_response(raw)
-    if isinstance(parsed, list):
+    # Try to extract a valid list
+    if isinstance(parsed, list) and len(parsed) >= len(sections_batch) - 1:
+        for p in parsed:
+            if isinstance(p, dict): p["_parse_failed"] = False
         return parsed
+
     if isinstance(parsed, dict) and parsed.get("sections"):
         return parsed["sections"]
 
-    # Fallback: create minimal sections from template
-    return [
-        {
-            "id":              s.get("id",""),
-            "level":           s.get("level",1),
-            "original_title":  s.get("title",""),
-            "ai_title":        s.get("title",""),
-            "reviewer_guidance":["See call text for detailed requirements"],
-            "policy_connections":["Reference relevant EU policies"],
-            "keywords_to_include":[],
-            "measures_and_evidence":"Include relevant KPIs and evidence",
-            "word_count_guidance": "300-600 words",
-            "common_mistakes":["Being too generic"],
-            "_parse_failed": True,
-        }
-        for s in sections_batch
-    ]
+    # Batch failed — fall back to one call per section
+    results = []
+    for sec in sections_batch:
+        annotated = _annotate_single_section(sec, intelligence, programme)
+        results.append(annotated)
+    return results
 
 
 def run_round2b(structure_template: list, call_analysis: dict,
@@ -415,7 +453,7 @@ def run_round2b(structure_template: list, call_analysis: dict,
     }
 
     # Process in batches of 4 sections
-    BATCH = 4
+    BATCH = 3
     all_annotated = []
     batches = [sections[i:i+BATCH] for i in range(0, len(sections), BATCH)]
 
