@@ -6,10 +6,48 @@ from config import DRIVE_POLICY_SUBFOLDER, DRIVE_TIER_FOLDERS
 
 
 def _get_credentials():
+    """
+    Load Google service account credentials from Streamlit secrets.
+    Handles TOML triple-quoted strings where private_key \n
+    sequences become literal newlines (invalid JSON).
+    """
     creds_raw = st.secrets["google"]["credentials_json"]
-    if isinstance(creds_raw, str):
-        return json.loads(creds_raw.strip())
-    return dict(creds_raw)
+
+    # Already a dict/mapping (Streamlit parsed the TOML inline table)
+    if not isinstance(creds_raw, str):
+        return dict(creds_raw)
+
+    creds_str = creds_raw.strip()
+
+    # Direct parse — works if JSON is on one line or already correct
+    try:
+        return json.loads(creds_str)
+    except json.JSONDecodeError:
+        pass
+
+    # Fix: private_key has real newlines instead of \n sequences
+    # Find the private key block and escape real newlines inside it
+    import re
+    def fix_key(m):
+        inner = m.group(2)
+        # Replace real newlines with the JSON escape sequence
+        inner = inner.replace('\r\n', '\\n').replace('\n', '\\n')
+        return m.group(1) + inner + m.group(3)
+
+    fixed = re.sub(
+        r'("private_key"\s*:\s*")([\s\S]*?)(?<!\\)(")',
+        fix_key,
+        creds_str
+    )
+
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Could not parse Google credentials JSON: {e}\n"
+            "Tip: In Streamlit Cloud secrets, paste the entire JSON "
+            "inside triple quotes using the credentials_json key."
+        )
 
 
 def _build_service():
