@@ -235,81 +235,89 @@ def export_architecture_docx(architecture: dict, analysis: dict,
     doc.add_page_break()
     _heading(doc, "PROPOSAL STRUCTURE")
 
+    def _safe_list(val):
+        """Return val as a list of strings, whatever format it comes in."""
+        if not val:
+            return []
+        if isinstance(val, list):
+            return [str(v) for v in val]
+        return [str(val)]
+
+    def _safe_pol(pol):
+        """Return policy connection as a string."""
+        if isinstance(pol, dict):
+            text = pol.get("policy","") or pol.get("name","") or str(pol)
+            how  = pol.get("how","") or pol.get("connection","")
+            return f"{text} — {how}" if how else text
+        return str(pol)
+
     sections = architecture.get("sections",[])
     for sec in sorted(sections, key=lambda x: x.get("order",0)):
-        level = sec.get("level",1)
-        title = sec.get("ai_title","") or sec.get("original_title","")
-        h     = _heading(doc, title, level=level)
+        try:
+            level = int(sec.get("level",1))
+            title = str(sec.get("ai_title","") or sec.get("original_title","") or sec.get("title","Untitled"))
+            _heading(doc, title, level=level)
 
-        # Title rationale (italics, muted)
-        if sec.get("title_rationale"):
-            p = doc.add_paragraph()
-            run = p.add_run(f"[{sec['title_rationale']}]")
-            run.italic = True
-            run.font.color.rgb = RGBColor(0x88,0x99,0xB0)
-            run.font.size = Pt(9)
+            if sec.get("title_rationale"):
+                p = doc.add_paragraph()
+                run = p.add_run(f"[{sec['title_rationale']}]")
+                run.italic = True
+                run.font.color.rgb = RGBColor(0x88,0x99,0xB0)
+                run.font.size = Pt(9)
 
-        # Reviewer guidance (RED)
-        if sec.get("reviewer_guidance"):
-            p = doc.add_paragraph()
-            run = p.add_run("🔴 REVIEWER EXPECTS:")
-            run.bold = True; run.font.color.rgb = RED
-            rg = sec["reviewer_guidance"]
-            points = rg if isinstance(rg, list) else [str(rg)]
-            for point in points:
-                bp = doc.add_paragraph(f"  • {point}", style="List Bullet")
-                for run in bp.runs:
-                    run.font.color.rgb = RED
+            rg = _safe_list(sec.get("reviewer_guidance"))
+            if rg:
+                p   = doc.add_paragraph()
+                run = p.add_run("REVIEWER EXPECTS:")
+                run.bold = True; run.font.color.rgb = RED
+                for point in rg:
+                    bp = doc.add_paragraph(f"  * {point}", style="List Bullet")
+                    for r in bp.runs: r.font.color.rgb = RED
 
-        # Policy connections (BLUE)
-        if sec.get("policy_connections"):
-            p = doc.add_paragraph()
-            run = p.add_run("🔵 POLICY CONNECTIONS:")
-            run.bold = True; run.font.color.rgb = BLUE
-            for pol in sec["policy_connections"]:
-                bp = doc.add_paragraph(
-                    f"  • {pol.get('policy','')} — {pol.get('how','')}",
-                    style="List Bullet"
-                )
-                for run in bp.runs:
-                    run.font.color.rgb = BLUE
+            pc = sec.get("policy_connections")
+            if pc:
+                p   = doc.add_paragraph()
+                run = p.add_run("POLICY CONNECTIONS:")
+                run.bold = True; run.font.color.rgb = BLUE
+                items = pc if isinstance(pc, list) else [pc]
+                for pol in items:
+                    bp = doc.add_paragraph(f"  * {_safe_pol(pol)}", style="List Bullet")
+                    for r in bp.runs: r.font.color.rgb = BLUE
 
-        # Keywords (GREEN)
-        if sec.get("keywords_to_include"):
-            p = doc.add_paragraph()
-            run = p.add_run("🟢 KEYWORDS: ")
-            run.bold = True; run.font.color.rgb = GREEN
-            kws = sec["keywords_to_include"]
-            kw_str = " · ".join(kws) if isinstance(kws, list) else str(kws)
-            kw_run = p.add_run(kw_str)
-            kw_run.font.color.rgb = GREEN
+            kws = _safe_list(sec.get("keywords_to_include"))
+            if kws:
+                p   = doc.add_paragraph()
+                run = p.add_run("KEYWORDS: ")
+                run.bold = True; run.font.color.rgb = GREEN
+                kw  = p.add_run(" / ".join(kws))
+                kw.font.color.rgb = GREEN
 
-        # Evidence & measures (AMBER)
-        if sec.get("measures_and_evidence"):
-            p = doc.add_paragraph()
-            run = p.add_run("🟡 EVIDENCE & MEASURES: ")
-            run.bold = True; run.font.color.rgb = AMBER
-            ev_run = p.add_run(sec["measures_and_evidence"])
-            ev_run.font.color.rgb = AMBER
+            ev = sec.get("measures_and_evidence","")
+            if ev:
+                p   = doc.add_paragraph()
+                run = p.add_run("EVIDENCE NEEDED: ")
+                run.bold = True; run.font.color.rgb = AMBER
+                er  = p.add_run(str(ev))
+                er.font.color.rgb = AMBER
 
-        # Word count guidance
-        if sec.get("word_count_guidance"):
-            p = doc.add_paragraph()
-            run = p.add_run(f"📏 {sec['word_count_guidance']}")
-            run.font.color.rgb = RGBColor(0x88,0x99,0xB0)
-            run.font.size = Pt(9)
+            wc = sec.get("word_count_guidance","")
+            if wc:
+                p   = doc.add_paragraph()
+                run = p.add_run(f"Length: {wc}")
+                run.font.color.rgb = RGBColor(0x88,0x99,0xB0)
+                run.font.size = Pt(9)
 
-        # Common mistakes
-        if sec.get("common_mistakes"):
-            p = doc.add_paragraph()
-            run = p.add_run("⚠ AVOID:")
-            run.bold = True; run.font.color.rgb = RGBColor(0x99,0x33,0x00)
-            cm = sec["common_mistakes"]
-            mistakes = cm if isinstance(cm, list) else [str(cm)]
-            for m in mistakes:
-                bp = doc.add_paragraph(f"  ✗ {m}", style="List Bullet")
-                for run in bp.runs:
-                    run.font.color.rgb = RGBColor(0x99,0x33,0x00)
+            cm = _safe_list(sec.get("common_mistakes"))
+            if cm:
+                p   = doc.add_paragraph()
+                run = p.add_run("AVOID:")
+                run.bold = True; run.font.color.rgb = RGBColor(0x99,0x33,0x00)
+                for m in cm:
+                    bp = doc.add_paragraph(f"  x {m}", style="List Bullet")
+                    for r in bp.runs: r.font.color.rgb = RGBColor(0x99,0x33,0x00)
+
+        except Exception as sec_err:
+            doc.add_paragraph(f"[Section error: {sec_err}]")
 
         doc.add_paragraph()
 
