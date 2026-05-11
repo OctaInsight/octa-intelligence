@@ -11,7 +11,7 @@ from modules.database import (get_call_analyses, get_call_setup,
                                create_proposal_architecture,
                                update_proposal_architecture, get_proposal)
 from modules.claude_client import (build_section_intelligence,
-                                   annotate_one_section,
+                                   annotate_section_batch,
                                    generate_overall_advice,
                                    _parse_json_response)
 from modules.word_export import export_architecture_docx
@@ -149,31 +149,32 @@ if st.button("🏗️ Generate Architecture", type="primary", use_container_widt
     # Build intelligence once
     intel = build_section_intelligence(analysis, latest_concept)
 
-    # Process each section with live progress
-    progress_bar = st.progress(0, text=f"Starting... 0/{n} sections")
+    # Process in batches of 4, save after each batch
+    BATCH_SIZE   = 4
+    batches      = [sections_to_process[i:i+BATCH_SIZE]
+                    for i in range(0, n, BATCH_SIZE)]
+    n_batches    = len(batches)
+    progress_bar = st.progress(0, text=f"Starting... 0/{n_batches} batches")
     status_text  = st.empty()
     completed    = []
     failed_count = 0
 
-    for i, sec in enumerate(sections_to_process):
-        sid   = sec.get("id","")
-        title = sec.get("title","")
-        level = sec.get("level",1)
-        indent= "  " * (level-1)
-
+    for b_idx, batch in enumerate(batches):
+        titles = ", ".join(s.get("title","")[:25] for s in batch)
         status_text.markdown(
-            f"<span style='color:{acc}'>{indent}⚙ Annotating [{sid}] {title}…</span>",
+            f"<span style='color:{acc}'>⚙ Batch {b_idx+1}/{n_batches}: {titles}…</span>",
             unsafe_allow_html=True)
-        progress_bar.progress((i+0.5)/n, text=f"Section {i+1}/{n}: {title[:35]}")
+        progress_bar.progress(b_idx/n_batches,
+                              text=f"Batch {b_idx+1}/{n_batches} ({len(batch)} sections)")
 
-        # Annotate this section
-        annotated = annotate_one_section(sec, intel, programme)
-        completed.append(annotated)
-        if annotated.get("_parse_failed"): failed_count += 1
+        annotated_batch = annotate_section_batch(batch, intel, programme)
+        completed.extend(annotated_batch)
+        failed_count += sum(1 for s in annotated_batch if s.get("_parse_failed"))
 
-        # Save to database after EVERY section
+        # Save after EVERY batch
         update_proposal_architecture(arch_id, {"sections": completed})
-        progress_bar.progress((i+1)/n, text=f"Saved {i+1}/{n}: {title[:35]}")
+        progress_bar.progress((b_idx+1)/n_batches,
+                              text=f"Saved batch {b_idx+1}/{n_batches}")
 
     # Generate overall advice
     status_text.markdown(f"<span style='color:{acc}'>💡 Generating strategic advice…</span>",
@@ -259,16 +260,21 @@ if failed:
         f"<strong style='color:{warn}'>⚠ {len(failed)} section(s) need regeneration</strong></div>",
         unsafe_allow_html=True)
     if st.button(f"🔄 Regenerate {len(failed)} Failed Section(s)", key="regen"):
-        intel2 = build_section_intelligence(analysis, latest_concept)
-        updated = list(sections)
-        prog2   = st.progress(0)
-        for i, sec in enumerate(updated):
-            if sec.get("_parse_failed"):
-                prog2.progress((i+1)/len(updated), text=f"Regenerating {sec.get('id','')}...")
-                updated[i] = annotate_one_section(sec, intel2, programme)
-                update_proposal_architecture(arch["id"], {"sections": updated})
+        intel2   = build_section_intelligence(analysis, latest_concept)
+        updated  = list(sections)
+        to_regen = [s for s in updated if s.get("_parse_failed")]
+        batches2 = [to_regen[i:i+4] for i in range(0, len(to_regen), 4)]
+        prog2    = st.progress(0)
+        for bi, batch in enumerate(batches2):
+            prog2.progress((bi+1)/len(batches2), text=f"Batch {bi+1}/{len(batches2)}...")
+            new_batch = annotate_section_batch(batch, intel2, programme)
+            for new_sec in new_batch:
+                for j, s in enumerate(updated):
+                    if s.get("id") == new_sec.get("id"):
+                        updated[j] = new_sec
+            update_proposal_architecture(arch["id"], {"sections": updated})
         prog2.progress(1.0)
-        st.success("✅ Done!"); st.rerun()
+        st.success("Done!"); st.rerun()
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -335,6 +341,28 @@ for sec in sorted(sections, key=lambda x: x.get("order",0)):
             return str(p)
 
         with c1:
+            # Main guidance paragraph (concept note + call integrated)
+            gp = sec.get("guidance_paragraph","")
+            if gp:
+                blue = "#4488CC"
+                st.markdown(
+                    f"<div style='background:{D["bg2"]};border-left:4px solid {acc};"
+                    f"border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.5rem'>"
+                    f"<strong style='color:{acc}'>📝 WHAT TO WRITE HERE:</strong><br>"
+                    f"<span style='color:{D["text"]};font-size:0.85rem'>{gp}</span>"
+                    f"</div>", unsafe_allow_html=True)
+
+            # Gaps to address
+            gap_text = sec.get("gaps_to_address","")
+            if gap_text:
+                danger = D["danger"]
+                st.markdown(
+                    f"<div style='background:{danger}11;border-left:3px solid {danger};"
+                    f"border-radius:6px;padding:0.5rem 0.8rem;margin-bottom:0.4rem'>"
+                    f"<strong style='color:{danger}'>⚠ GAP TO ADDRESS:</strong> "
+                    f"<span style='color:{D["text"]};font-size:0.83rem'>{gap_text}</span>"
+                    f"</div>", unsafe_allow_html=True)
+
             rg = _safe_list(sec.get("reviewer_guidance"))
             if rg:
                 danger = D["danger"]
