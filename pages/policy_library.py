@@ -10,7 +10,7 @@ from modules.document_processor import (extract_from_pdf, extract_from_docx,
                                          extract_from_url, prepare_text_for_storage,
                                          count_words, estimate_tokens)
 from modules.claude_client import generate_document_summary
-from modules.drive_manager import upload_policy_document, ensure_policy_folder_structure
+from modules.drive_manager import upload_policy_document, test_drive_connection
 from config import (DARK as D, POLICY_CATEGORIES, POLICY_TIERS, PROGRAMMES)
 
 st.set_page_config(page_title="Policy Library — Octa", page_icon="📚",
