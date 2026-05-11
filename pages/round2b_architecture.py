@@ -115,39 +115,49 @@ with st.expander("Structure Definition", expanded=not archs):
 if st.button("Generate Architecture", type="primary", use_container_width=True):
     if not template_sections:
         st.error("No sections defined. Add your structure above."); st.stop()
-    with st.spinner(f"Annotating {len(template_sections)} sections... 2-4 minutes..."):
-        result, raw_text = run_round2b(
-            structure_template = template_sections,
-            call_analysis      = analysis,
-            concept_evaluation = latest_concept,
-            programme          = programme,
-            user_custom_titles = user_titles if user_titles else None,
-        )
-    if raw_text:
-        from datetime import datetime, timezone
-        sections = result.get("sections",[]) if result else []
-        ok, arch_id = create_proposal_architecture({
-            "proposal_id":           sel_pid,
-            "call_analysis_id":      analysis["id"],
-            "concept_evaluation_id": latest_concept["id"] if latest_concept else None,
-            "api_mode":              "realtime",
-            "status":                "complete" if sections else "raw_only",
-            "programme":             programme,
-            "structure_type":        "pre_built" if prog_info.get("structure") else "custom",
-            "sections":              sections,
-            "total_sections":        sum(1 for s in sections if s.get("level",1)==1),
-            "total_subsections":     sum(1 for s in sections if s.get("level",1)>1),
-            "raw_response":          raw_text[:15000],
-            "completed_at":          datetime.now(timezone.utc).isoformat(),
-        })
-        if ok:
-            if sections:
-                st.success(f"Architecture generated - {len(sections)} sections!")
-            else:
-                st.warning("Response saved but JSON not parsed. Click Re-Parse below.")
-            st.rerun()
+
+    n_batches = max(1, (len(template_sections) + 3) // 4)
+    progress  = st.progress(0, text=f"Starting... 0/{n_batches} batches")
+    status_box= st.empty()
+
+    import math
+    # Monkey-patch to show progress — we call run_round2b which does batches internally
+    status_box.info(f"Processing {len(template_sections)} sections in ~{n_batches} batches "
+                    f"(~{n_batches * 30} seconds)...")
+
+    result, raw_text = run_round2b(
+        structure_template = template_sections,
+        call_analysis      = analysis,
+        concept_evaluation = latest_concept,
+        programme          = programme,
+        user_custom_titles = user_titles if user_titles else None,
+    )
+    progress.progress(1.0, text="Done!")
+
+    from datetime import datetime, timezone
+    sections = result.get("sections",[]) if result else []
+
+    ok, arch_id = create_proposal_architecture({
+        "proposal_id":           sel_pid,
+        "call_analysis_id":      analysis["id"],
+        "concept_evaluation_id": latest_concept["id"] if latest_concept else None,
+        "api_mode":              "realtime",
+        "status":                "complete" if sections else "raw_only",
+        "programme":             programme,
+        "structure_type":        "pre_built" if prog_info.get("structure") else "custom",
+        "sections":              sections,
+        "general_advice":        result.get("general_advice","") if result else "",
+        "top_5_priorities":      result.get("top_5_priorities",[]) if result else [],
+        "total_sections":        sum(1 for s in sections if s.get("level",1)==1),
+        "total_subsections":     sum(1 for s in sections if s.get("level",1)>1),
+        "raw_response":          (raw_text or "")[:5000],
+        "completed_at":          datetime.now(timezone.utc).isoformat(),
+    })
+    if ok:
+        status_box.success(f"Architecture complete - {len(sections)} sections annotated!")
+        st.rerun()
     else:
-        st.error("Claude returned no response. Check API key in secrets.")
+        st.error("Save failed.")
 
 if not archs: st.stop()
 
