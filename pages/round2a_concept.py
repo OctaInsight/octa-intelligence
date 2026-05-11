@@ -7,6 +7,7 @@ from modules.ui_helpers import (inject_css, sidebar_nav, page_header,
 from modules.database import (get_call_analyses, get_concept_evaluations,
                                create_concept_evaluation, get_proposal)
 from modules.claude_client import run_round2a
+from modules.word_export import export_round2a_docx
 from config import DARK as D
 
 st.set_page_config(page_title="Concept Evaluation — Octa", page_icon="📝",
@@ -126,6 +127,17 @@ if not _has_scores and _raw_ev:
     st.stop()
 
 section_label("📊 Evaluation Results")
+
+# Word download
+docx_bytes = export_round2a_docx(ev, sel_pid, acronym)
+st.download_button(
+    "📥 Download Evaluation Report (Word)",
+    data=docx_bytes,
+    file_name=f"{acronym}_Concept_Evaluation.docx",
+    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    key="dl_r2a"
+)
+st.markdown("<br>", unsafe_allow_html=True)
 
 # Score overview
 overall = ev.get("overall_alignment_score",0)
